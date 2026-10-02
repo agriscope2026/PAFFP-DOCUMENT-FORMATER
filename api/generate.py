@@ -1,7 +1,7 @@
 """Vercel serverless function: POST a masterlist .xlsx, get back a .zip with the
-AR and/or STUB files.
+System Upload, AR and/or STUB files.
 
-Request:  POST /api/generate?name=<file name>&formats=AR,STUB
+Request:  POST /api/generate?name=<file name>&formats=SYSTEM,AR,STUB&amount=2325
           body = the raw .xlsx file
 Response: 200 application/zip, or 400/500 JSON {"error": "..."}
 """
@@ -24,10 +24,16 @@ class handler(BaseHTTPRequestHandler):
         try:
             q = parse_qs(urlparse(self.path).query)
             name = Path(q.get("name", ["masterlist.xlsx"])[0]).name
-            wanted = {s.strip().upper() for s in q.get("formats", ["AR,STUB"])[0].split(",") if s.strip()}
+            all_names = ",".join(f["name"] for f in engine.FORMATS)
+            wanted = {s.strip().upper() for s in q.get("formats", [all_names])[0].split(",") if s.strip()}
             formats = [f for f in engine.FORMATS if f["name"] in wanted]
             if not formats:
-                return self._error(400, "Choose AR and/or STUB.")
+                return self._error(400, "Choose at least one output.")
+            amount = q.get("amount", [str(engine.DEFAULT_AMOUNT or "")])[0].replace(",", "").strip()
+            try:
+                amount = (float(amount) if "." in amount else int(amount)) if amount else None
+            except ValueError:
+                return self._error(400, "Amount must be a number, e.g. 2325.")
             size = int(self.headers.get("Content-Length") or 0)
             if size <= 0:
                 return self._error(400, "No file received.")
@@ -39,10 +45,10 @@ class handler(BaseHTTPRequestHandler):
             zbuf = io.BytesIO()
             summary = {}
             with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
-                for out_name, xlsx, pages, groups in engine.generate(
-                        io.BytesIO(data), name, formats, log=notes.append):
+                for out_name, xlsx, info, groups in engine.generate(
+                        io.BytesIO(data), name, formats, log=notes.append, default_amount=amount):
                     z.writestr(out_name, xlsx)
-                    summary[out_name] = pages
+                    summary[out_name] = info
             body = zbuf.getvalue()
         except ValueError as e:
             return self._error(400, f"{name}: {e}")
@@ -54,13 +60,14 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/zip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(zip_name)}")
-        self.send_header("X-Summary", quote(json.dumps({"notes": notes, "pages": summary})))
+        self.send_header("X-Summary", quote(json.dumps({"notes": notes, "files": summary})))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
-        self._json(200, {"ok": True, "formats": [f["name"] for f in engine.FORMATS]})
+        self._json(200, {"ok": True, "default_amount": engine.DEFAULT_AMOUNT,
+                         "formats": [{"name": f["name"], "label": f["label"]} for f in engine.FORMATS]})
 
     def _error(self, code, msg):
         self._json(code, {"error": msg})

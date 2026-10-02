@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PAFFP Formatter</title>
-<meta name="description" content="Create PAFFP AR and STUB files from beneficiary masterlists.">
+<meta name="description" content="Create PAFFP System Upload, AR and STUB files from beneficiary masterlists.">
 <style>
   :root {
     --bg: #f4f6f3; --card: #ffffff; --text: #1d2a22; --muted: #5d6b62; --line: #d9e0db;
@@ -50,6 +50,9 @@
   .opts label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .opts input { width: 18px; height: 18px; accent-color: var(--accent); }
   .opts span small { display: block; color: var(--muted); font-size: 12px; }
+  .amount { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 14px; }
+  .amount input { width: 110px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+                  background: var(--bg); color: var(--text); font: inherit; }
   .actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   #go { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 28px;
         font-size: 16px; font-weight: 700; cursor: pointer; }
@@ -65,14 +68,14 @@
 <main>
   <header>
     <h1>PAFFP Formatter</h1>
-    <p>Turn beneficiary masterlists into the AR (payroll) and STUB formats, ready to print.</p>
+    <p>Turn beneficiary masterlists in any column layout into the System Upload file, the AR (payroll) and the STUB, ready to print.</p>
   </header>
 
   <section class="card">
     <p class="step">1 &middot; Masterlist files</p>
     <div id="drop" tabindex="0" role="button" aria-label="Choose masterlist files">
       <strong>Choose files</strong> or drag them here
-      <small>Excel masterlists (.xlsx) with RSBSA NO., SURNAME, FIRST NAME and BARANGAY columns</small>
+      <small>Excel masterlists (.xlsx). Columns can be in any order; each data sheet gets its own files.</small>
     </div>
     <input id="picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
     <ul id="files"></ul>
@@ -81,11 +84,15 @@
   <section class="card">
     <p class="step">2 &middot; What to create</p>
     <div class="opts">
+      <label><input type="checkbox" id="fmt-SYSTEM" checked>
+        <span>System upload<small>One continuous list for uploading</small></span></label>
       <label><input type="checkbox" id="fmt-AR" checked>
         <span>AR format<small>15 beneficiaries per page, with signatories</small></span></label>
       <label><input type="checkbox" id="fmt-STUB" checked>
-        <span>STUB format<small>20 per page, QR code of the RSBSA number</small></span></label>
+        <span>STUB format<small>20 per page with QR codes, no signatories</small></span></label>
     </div>
+    <label class="amount">Amount if the masterlist has none
+      <input id="amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
   </section>
 
   <section class="card actions">
@@ -94,7 +101,7 @@
   </section>
 
   <footer>
-    Each masterlist downloads as a .zip containing its AR and/or STUB Excel files.
+    Each masterlist downloads as a .zip containing its System Upload, AR and/or STUB Excel files.
     <ul>
       <li>Every barangay starts on a new page; numbering continues to the end.</li>
       <li>Files are processed in memory and are not stored on the server.</li>
@@ -153,8 +160,10 @@
   }
 
   go.onclick = async () => {
-    const formats = ["AR", "STUB"].filter(f => document.getElementById("fmt-" + f).checked);
-    if (!formats.length) { setMsg("Tick AR and/or STUB.", true); return; }
+    const formats = ["SYSTEM", "AR", "STUB"].filter(f => document.getElementById("fmt-" + f).checked);
+    if (!formats.length) { setMsg("Tick at least one output.", true); return; }
+    const amount = document.getElementById("amount").value.replace(/,/g, "").trim();
+    if (amount && !/^\d+(\.\d+)?$/.test(amount)) { setMsg("Amount must be a number, e.g. 2325.", true); return; }
     busy = true; refresh();
     let ok = 0, failed = 0;
     for (const [n, item] of items.entries()) {
@@ -162,7 +171,7 @@
       item.li.querySelector(".notes")?.remove();
       item.statusEl.className = "status"; item.statusEl.textContent = "Working…";
       try {
-        const res = await fetch(`/api/generate?name=${encodeURIComponent(item.file.name)}&formats=${formats.join(",")}`,
+        const res = await fetch(`/api/generate?name=${encodeURIComponent(item.file.name)}&formats=${formats.join(",")}&amount=${encodeURIComponent(amount)}`,
                                 { method: "POST", body: item.file, headers: { "Content-Type": "application/octet-stream" } });
         if (!res.ok) {
           let err = `Server error ${res.status}`;
@@ -175,12 +184,13 @@
         const fname = m ? decodeURIComponent(m[1]) : item.file.name.replace(/\.\w+$/, "") + " - PAFFP.zip";
         let summary = {};
         try { summary = JSON.parse(decodeURIComponent(res.headers.get("X-Summary") || "")); } catch {}
-        const pages = Object.entries(summary.pages || {}).map(([k, v]) => `${k.split(" - ").pop().replace(" FORMAT.xlsx", "")} ${v} pages`);
+        const nfiles = Object.keys(summary.files || {}).length;
         item.statusEl.className = "status ok";
-        item.statusEl.textContent = "Downloaded" + (pages.length ? ` · ${pages.join(", ")}` : "");
-        const notes = (summary.notes || []).filter(s => s.includes("note:")).map(s => s.replace(/^\s*note:\s*/, ""));
+        item.statusEl.textContent = `Downloaded · ${nfiles} file${nfiles === 1 ? "" : "s"}`;
+        const notes = (summary.notes || []).filter(s => /note:|AMOUNT|beneficiaries,/.test(s))
+          .map(s => s.trim().replace(/^note:\s*/, ""));
         if (notes.length) {
-          const d = document.createElement("div"); d.className = "notes"; d.textContent = notes.join(" ");
+          const d = document.createElement("div"); d.className = "notes"; d.innerText = notes.join("\n");
           item.li.append(d);
         }
         download(blob, fname);

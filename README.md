@@ -1,6 +1,13 @@
-# PAFFP Formatter (AR + STUB)
+# PAFFP Formatter (System Upload + AR + STUB)
 
-Turns beneficiary masterlists into the AR (payroll) and STUB formats.
+Turns beneficiary masterlists (any column order, missing columns allowed) into three files:
+
+- `<name> - SYSTEM UPLOAD.xlsx` – one continuous list for uploading to the system
+- `<name> - AR FORMAT.xlsx` – payroll, 15 per page, with signatories
+- `<name> - STUB FORMAT.xlsx` – 20 per page with QR codes of the RSBSA number, no signatories
+
+A workbook with several data sheets (e.g. UNCLAIMED, ADDITIONAL) gets one set per sheet.
+If the masterlist has no AMOUNT, the default amount (2325, changeable in the app/web page) is used.
 
 | Use | How |
 |---|---|
@@ -8,8 +15,9 @@ Turns beneficiary masterlists into the AR (payroll) and STUB formats.
 | Command line | `python paffp_formatter.py "masterlist.xlsx"` (no arguments = every file in `MASTERLISTS/`) |
 | Web (Vercel) | Open the site, add masterlists, press **Create**; each downloads as a .zip. |
 
-Templates: `AR FORMAT.xlsx`, `STUB FORMAT.xlsx` — edit their text (signatories, Region/Province) in Excel.
-Rows per page and QR size: `FORMATS` at the top of `paffp_formatter.py`.
+Templates: `System Uploading Template.xlsx`, `AR FORMAT.xlsx`, `STUB FORMAT.xlsx` — edit their text
+(signatories, Region/Province) in Excel; keep them empty of beneficiary data.
+Rows per page, QR size, default amount and recognised heading spellings: top of `paffp_formatter.py`.
 
 ## Deploy to Vercel
 
@@ -17,7 +25,7 @@ Project layout used by Vercel:
 
 - `public/index.html` – the web page
 - `api/generate.py` – Python function (POST a masterlist, returns a zip)
-- `paffp_formatter.py`, `AR FORMAT.xlsx`, `STUB FORMAT.xlsx` – bundled into the function (`vercel.json`)
+- `paffp_formatter.py` and the three templates – bundled into the function (`vercel.json`)
 - `requirements.txt` – Python packages
 - `.vercelignore` / `.gitignore` – keep `MASTERLISTS/`, `OUTPUT/`, `_backup/` and PDFs off the server and out of Git
 

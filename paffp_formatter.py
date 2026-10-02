@@ -1,34 +1,38 @@
 """
-PAFFP FORMATTER  (AR + STUB)
-============================
-Turns beneficiary masterlists into the AR (payroll) format and the STUB
-format at the same time.
+PAFFP FORMATTER  (SYSTEM UPLOAD + AR + STUB)
+============================================
+Turns beneficiary masterlists (any column layout) into three files:
+    <name> - SYSTEM UPLOAD.xlsx   flat list for uploading to the system
+    <name> - AR FORMAT.xlsx       payroll, 15 per page, with signatories
+    <name> - STUB FORMAT.xlsx     20 per page, QR code of the RSBSA number
 
 HOW TO USE
   - Easiest: double-click "PAFFP FORMATTER.bat" and pick the masterlist files.
   - Command line:  python paffp_formatter.py "masterlist1.xlsx" "masterlist2.xlsx"
     (with no files given, every .xlsx in the MASTERLISTS folder is formatted)
-  Output goes to the OUTPUT folder:
-      <masterlist name> - AR FORMAT.xlsx
-      <masterlist name> - STUB FORMAT.xlsx
+  - Web: see README.md (Vercel).
+  A workbook with several data sheets (e.g. UNCLAIMED, ADDITIONAL) gives one set
+  of files per sheet: "<file> - <sheet> - AR FORMAT.xlsx", ...
 
-TEMPLATES ("AR FORMAT.xlsx", "STUB FORMAT.xlsx")
-  - Rows 1..N   : page header block (title, Region/Province, column headings).
-                  The column-heading row is the one containing "RSBSA".
+MASTERLISTS
+  Columns are matched by their heading text, in any order (see FIELD_ALIASES).
+  Missing columns are left blank (AMOUNT uses DEFAULT_AMOUNT). A name
+  extension column (JR, SR, III) is added to the first name. A single
+  full-name column ("DELA CRUZ, JUAN P.") is split into its parts.
+
+TEMPLATES ("System Uploading Template.xlsx", "AR FORMAT.xlsx", "STUB FORMAT.xlsx")
+  - Rows 1..N   : header block; the last of these rows holds the column headings.
   - Row N+1     : one EMPTY formatted row, used as the format of every beneficiary row.
-  - Rows after  : spacer + signatories, copied once after the last beneficiary.
-  Each template column is filled by matching its heading (NO, RSBSA NO.,
-  SURNAME, FIRST NAME, MIDDLE NAME, BIRTHDATE, BARANGAY, MUNICIPALITY,
-  AMOUNT, ID TYPE...). Edit text such as signatory names or Region/Province
-  directly in the templates; the formatter picks the changes up automatically.
+  - Rows after  : (optional) footer such as signatories, copied once at the end.
+  Each template column is filled by matching its heading. Edit text such as
+  signatory names directly in the templates; changes are picked up automatically.
 
 RULES APPLIED
-  - Each page repeats the header block and holds exactly rows_per_page rows
-    (AR 15, STUB 20), except the last page of each barangay (the remainder).
-  - Each barangay starts on a new page.
-  - The NO. column continues across barangays (1, 2, 3, ... to the end).
-  - The signatories follow the last beneficiary, on the same page.
-  - STUB only: a small QR code of the RSBSA number is placed in the NO. column.
+  - Every barangay starts on a new page; NO. continues 1, 2, 3 ... to the end.
+  - AR/STUB: the header block repeats on every page, which holds exactly
+    rows_per_page rows (AR 15, STUB 20) except a barangay's last page.
+  - SYSTEM UPLOAD: one continuous list, headings repeat when printed.
+  - AR only: signatories after the last beneficiary. STUB: rows + QR codes only.
 """
 import io
 import re
@@ -36,7 +40,7 @@ import sys
 import warnings
 import zlib
 from copy import copy
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -56,37 +60,59 @@ INPUT_DIR = BASE_DIR / "MASTERLISTS"
 OUTPUT_DIR = BASE_DIR / "OUTPUT"
 
 # One entry per output document.
-#   rows_per_page: beneficiaries per page (only a barangay's last page may have fewer)
+#   name:          short id (used by the app/web checkboxes)
+#   suffix:        added to the output file name
+#   layout:        "pages" = header block repeated on every page (AR/STUB),
+#                  "list"  = one heading row, continuous list (system upload)
+#   rows_per_page: beneficiaries per page for "pages" (a barangay's last page may have fewer)
 #   qr_column:     column (1 = A) that gets a QR code of the RSBSA number, or None
 #   qr_size_pt:    printed size of the QR code (points; 72 pt = 1 inch)
 FORMATS = [
-    {"name": "AR", "template": BASE_DIR / "AR FORMAT.xlsx", "rows_per_page": 15,
-     "qr_column": None},
-    {"name": "STUB", "template": BASE_DIR / "STUB FORMAT.xlsx", "rows_per_page": 20,
+    {"name": "SYSTEM", "label": "System upload", "suffix": "SYSTEM UPLOAD",
+     "template": BASE_DIR / "System Uploading Template.xlsx", "layout": "list"},
+    {"name": "AR", "label": "AR format", "suffix": "AR FORMAT",
+     "template": BASE_DIR / "AR FORMAT.xlsx", "layout": "pages", "rows_per_page": 15},
+    {"name": "STUB", "label": "STUB format", "suffix": "STUB FORMAT",
+     "template": BASE_DIR / "STUB FORMAT.xlsx", "layout": "pages", "rows_per_page": 20,
      "qr_column": 1, "qr_size_pt": 22},
 ]
 
+DEFAULT_AMOUNT = 2325       # used when the masterlist has no AMOUNT (None = leave blank)
 SORT_BY_SURNAME = False     # True = sort beneficiaries alphabetically inside each barangay
 PAPER_SIZE = 14             # 14 = Folio / Long bond 8.5x13 in, 5 = Legal, 9 = A4, 1 = Letter
 ORIENTATION = "landscape"
 QR_LEFT_PT = 4              # gap between the cell's left border and the QR code
 
 # Heading text -> field. Matching ignores case, spaces and punctuation, so
-# "RSBSA NO." / "RSBSA No" / "rsbsa_no" all work. Used for both the masterlist
-# and the template headings.
+# "RSBSA NO." / "RSBSA No" / "rsbsa_no" all work, and columns may be in any
+# order. Used for both the masterlist and the template headings.
+# To support a new heading spelling, add it (lower case, letters/digits only).
 FIELD_ALIASES = {
-    "number": ["no", "nos", "number", "count"],
-    "rsbsa": ["rsbsano", "rsbsa", "rsbsanumber", "referenceno"],
-    "surname": ["surname", "lastname", "familyname"],
-    "first": ["firstname", "givenname", "first"],
-    "middle": ["middlename", "middle", "mi"],
-    "birthdate": ["birthdate", "dateofbirth", "birthday", "bday", "dob"],
-    "barangay": ["barangay", "brgy"],
-    "municipality": ["municipality", "citymunicipality", "town", "city"],
-    "amount": ["amount"],
-    "idtype": ["idtypeidnoofauthorizedclaimants", "idtype", "idno"],
+    "number": ["no", "nos", "number", "count", "seqno", "itemno"],
+    "rsbsa": ["rsbsano", "rsbsa", "rsbsanumber", "rsbsaid", "rsbsarefno", "rsbsareferenceno",
+              "rsbsareferencenumber", "rsbsasystemgeneratedno", "referenceno", "referencenumber", "refno"],
+    "surname": ["surname", "lastname", "familyname", "lname", "apelyido"],
+    "first": ["firstname", "givenname", "first", "fname", "pangalan"],
+    "middle": ["middlename", "middle", "mi", "middleinitial", "mname"],
+    "ext": ["extname", "nameextension", "extensionname", "nameext", "ext", "extension", "suffix",
+            "qualifier"],
+    "fullname": ["name", "fullname", "completename", "nameofbeneficiary", "beneficiaryname",
+                 "beneficiary", "nameoffarmer", "farmername", "nameoffarmerfisherfolk", "names"],
+    "birthdate": ["birthdate", "dateofbirth", "birthday", "bday", "dob", "bdate"],
+    "barangay": ["barangay", "brgy", "barangayname", "nameofbarangay", "bgy", "farmeraddressbgy",
+                 "addressbgy", "addressbrgy", "addressbarangay", "farmeraddressbarangay"],
+    "municipality": ["municipality", "citymunicipality", "municipalitycity", "cityormunicipality",
+                     "town", "city", "mun", "municipal", "lgu", "farmeraddressmun", "addressmun",
+                     "addressmunicipality", "farmeraddressmunicipality", "addresscitymun"],
+    "amount": ["amount", "amt", "amountreceived", "cashassistance"],
+    "idtype": ["idtypeidnoofauthorizedclaimants", "idtype", "idno", "validid"],
 }
-REQUIRED = ("rsbsa", "surname", "first", "barangay")
+NAME_FIELDS = ("rsbsa", "surname", "first", "fullname")   # a masterlist needs at least one
+LABELS = {"number": "NO", "rsbsa": "RSBSA NO.", "surname": "SURNAME", "first": "FIRST NAME",
+          "middle": "MIDDLE NAME", "ext": "NAME EXT.", "birthdate": "BIRTHDATE",
+          "barangay": "BARANGAY", "municipality": "MUNICIPALITY", "amount": "AMOUNT",
+          "idtype": "ID TYPE"}
+NO_NOTE = {"number", "idtype"}   # columns that are normally empty / generated
 EMU_PER_PT = 12700
 
 
@@ -94,45 +120,70 @@ def norm(text):
     return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
 
 
-def match_field(heading, exact_only=False):
+def match_field(heading, level=2):
+    """Field for a heading. level 0 = exact alias only, 1 = also heading starts
+    with an alias ("BARANGAY NAME"), 2 = also alias inside heading ("NAME OF BRGY")."""
     h = norm(heading)
     if not h:
         return None
     for field, aliases in FIELD_ALIASES.items():
         if h in aliases:
             return field
-    if exact_only:
-        return None
-    for field, aliases in FIELD_ALIASES.items():
-        if field != "number" and any(h.startswith(a) for a in aliases if len(a) > 2):
-            return field
+    loose = [(f, a) for f, a in FIELD_ALIASES.items() if f not in ("number", "fullname", "ext")]
+    if level >= 1:
+        for field, aliases in loose:
+            if any(h.startswith(a) for a in aliases if len(a) > 3):
+                return field
+    if level >= 2:
+        for field, aliases in loose:
+            if any(a in h for a in aliases if len(a) > 4):
+                return field
     return None
+
+
+def map_columns(cells):
+    """cells: [(heading text, column)]. Returns {field: column}; exact matches win
+    over looser ones, and each field/column is used once."""
+    cols, used = {}, set()
+    for level in (0, 1, 2):
+        for text, col in cells:
+            field = match_field(text, level)
+            if field and field not in cols and col not in used:
+                cols[field] = col
+                used.add(col)
+    return cols
+
+
+def find_heading_row(ws, max_scan=30):
+    """Row (within the first max_scan rows) whose cells match the most fields."""
+    best = (0, None, {})
+    for r in range(1, min(ws.max_row, max_scan) + 1):
+        cells = [(c.value, c.column) for c in ws[r] if c.value not in (None, "")]
+        cols = map_columns(cells)
+        score = len(cols) + (2 if "rsbsa" in cols else 0)
+        if len(cols) >= 2 and any(f in cols for f in NAME_FIELDS) and score > best[0]:
+            best = (score, r, cols)
+    return best[1], best[2]
 
 
 # ---------------------------------------------------------------- template
 class Template:
     def __init__(self, path):
         if not Path(path).exists():
-            raise FileNotFoundError(f"template not found: {path}")
+            raise FileNotFoundError(f"template not found: {Path(path).name}")
         self.ws = openpyxl.load_workbook(path).active
         ws = self.ws
-        self.heading_row = next(
-            (r for r in range(1, ws.max_row + 1)
-             if any("rsbsa" in norm(c.value) for c in ws[r])), None)
+        self.heading_row, cols = find_heading_row(ws, max_scan=ws.max_row)
         if self.heading_row is None:
-            raise ValueError(f"no column-heading row (with 'RSBSA') in {Path(path).name}")
+            raise ValueError(f"no column-heading row found in {Path(path).name}")
         self.data_row = self.heading_row + 1
         self.header_rows = list(range(1, self.heading_row + 1))
         self.footer_rows = list(range(self.data_row + 1, ws.max_row + 1))
         heads = [c for c in ws[self.heading_row] if c.value not in (None, "")]
         self.last_col = max(c.column for c in heads)
         self.max_col = max(ws.max_column, self.last_col)
-        # which field goes into which column
-        self.columns = {}
-        for c in heads:
-            field = match_field(c.value)
-            if field and field not in self.columns.values():
-                self.columns[c.column] = field
+        # which field goes into which template column
+        self.columns = {col: field for field, col in cols.items()}
 
     def copy_row(self, src_row, dst_ws, dst_row, with_values=True, merges=None):
         """Copy one template row's formatting (and values) onto dst_row."""
@@ -152,34 +203,75 @@ class Template:
 
 
 # ---------------------------------------------------------------- masterlist
-def read_masterlist(path):
-    """Return list of dicts (one per beneficiary) from the first sheet that has headings."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+def split_full_name(name):
+    """'DELA CRUZ, JUAN P.' -> (DELA CRUZ, JUAN, P.); 'JUAN P. DELA CRUZ' is split
+    as first words / last word."""
+    name = re.sub(r"\s+", " ", str(name or "")).strip()
+    if not name:
+        return None, None, None
+    if "," in name:
+        surname, rest = [s.strip() for s in name.split(",", 1)]
+        words = rest.split()
+        if len(words) > 1 and (len(words[-1].rstrip(".")) <= 2 or words[-1].endswith(".")):
+            return surname, " ".join(words[:-1]), words[-1]
+        return surname, rest, None
+    words = name.split()
+    if len(words) == 1:
+        return words[0], None, None
+    return words[-1], " ".join(words[:-1]), None
+
+
+def read_sheet(ws, hr, cols):
+    """Beneficiary records of one sheet. Returns (records, sorted fields found)."""
+    heading_text = {f: norm(ws.cell(hr, c).value) for f, c in cols.items()}
+    records = []
+    for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+        rec = {f: (row[c - 1] if c - 1 < len(row) else None) for f, c in cols.items()}
+        rec = {f: (re.sub(r"\s+", " ", v).strip() if isinstance(v, str) else v) for f, v in rec.items()}
+        rec = {f: (None if v == "" else v) for f, v in rec.items()}
+        if not any(rec.get(f) for f in NAME_FIELDS):
+            continue  # blank / filler row
+        if any(norm(rec.get(f)) == heading_text[f] for f in NAME_FIELDS if f in rec):
+            continue  # heading repeated inside the list
+        if any(norm(rec.get(f)) in ("total", "grandtotal", "subtotal") for f in NAME_FIELDS + ("number",)):
+            continue  # total line
+        if "fullname" in rec and not rec.get("surname") and not rec.get("first"):
+            s, f, m = split_full_name(rec["fullname"])
+            rec["surname"], rec["first"] = s, f
+            rec["middle"] = rec.get("middle") or m
+        ext = str(rec.get("ext") or "").strip()
+        if ext and ext.upper() not in ("N/A", "NA", "NONE", "-") and rec.get("first"):
+            first = str(rec["first"])
+            if not norm(first).endswith(norm(ext)):
+                rec["first"] = f"{first} {ext}"
+        records.append(rec)
+
+    found = set(cols)
+    if "fullname" in found:
+        found |= {"surname", "first"}
+        if any(r.get("middle") for r in records):
+            found.add("middle")
+    return records, sorted(found)
+
+
+def read_masterlist(source):
+    """All data sheets of a masterlist workbook, in sheet order.
+    Columns may be in any order and any may be missing.
+    Returns [(sheet title, records, fields found)] (sheets without beneficiaries skipped)."""
+    wb = openpyxl.load_workbook(source, data_only=True)
+    sheets = []
     for ws in wb.worksheets:
-        for hr in range(1, min(ws.max_row, 30) + 1):
-            heads = [(c.value, c.column) for c in ws[hr] if c.value is not None]
-            if not any("rsbsa" in norm(v) for v, _ in heads):
-                continue
-            cols = {}
-            for exact in (True, False):          # exact heading matches win over prefixes
-                for v, col in heads:
-                    field = match_field(v, exact_only=exact)
-                    if field and field not in cols:
-                        cols[field] = col
-            missing = [f for f in REQUIRED if f not in cols]
-            if missing:
-                raise ValueError(f"missing column(s) {', '.join(missing)} in sheet '{ws.title}'")
-            records = []
-            for row in ws.iter_rows(min_row=hr + 1, values_only=True):
-                rec = {f: (row[c - 1] if c - 1 < len(row) else None) for f, c in cols.items()}
-                rec = {f: (v.strip() if isinstance(v, str) else v) for f, v in rec.items()}
-                if not rec.get("rsbsa") and not rec.get("surname"):
-                    continue  # blank / filler row
-                if norm(rec.get("surname")) in ("surname", "total", "grandtotal"):
-                    continue  # repeated heading or total line
-                records.append(rec)
-            return records, sorted(cols)
-    raise ValueError("no heading row containing 'RSBSA' was found")
+        if ws.sheet_state != "visible":
+            continue
+        hr, cols = find_heading_row(ws)
+        if hr:
+            records, found = read_sheet(ws, hr, cols)
+            if records:
+                sheets.append((ws.title, records, found))
+    if not sheets:
+        raise ValueError("could not find beneficiaries under column headings "
+                         "(e.g. RSBSA NO., SURNAME, FIRST NAME)")
+    return sheets
 
 
 def group_by_barangay(records):
@@ -194,11 +286,12 @@ def group_by_barangay(records):
 
 
 def paginate(groups, rows_per_page):
-    """Split every barangay into pages of rows_per_page. Returns list of pages."""
+    """Split every barangay into pages of rows_per_page (None = whole barangay)."""
     pages = []
     for recs in groups.values():
-        for i in range(0, len(recs), rows_per_page):
-            pages.append(recs[i:i + rows_per_page])
+        step = rows_per_page or len(recs)
+        for i in range(0, len(recs), step):
+            pages.append(recs[i:i + step])
     return pages
 
 
@@ -247,11 +340,26 @@ def cell_value(field, val):
     return val
 
 
-def build(groups, tpl, fmt, out_path):
-    pages = paginate(groups, fmt.get("rows_per_page", 15))
+def copy_print_setup(src, dst):
+    """Use the template's own page setup (system upload template)."""
+    for attr in ("orientation", "paperSize", "scale", "fitToWidth", "fitToHeight"):
+        val = getattr(src.page_setup, attr)
+        if val is not None:
+            setattr(dst.page_setup, attr, val)
+    dst.sheet_properties.pageSetUpPr.fitToPage = bool(src.sheet_properties.pageSetUpPr
+                                                      and src.sheet_properties.pageSetUpPr.fitToPage)
+    for attr in ("left", "right", "top", "bottom", "header", "footer"):
+        setattr(dst.page_margins, attr, getattr(src.page_margins, attr))
+    dst.print_options.horizontalCentered = src.print_options.horizontalCentered
+
+
+def build(groups, tpl, fmt, out):
+    """Write one output workbook to out (path or file-like). Returns a short summary."""
+    paged = fmt.get("layout", "pages") == "pages"
+    pages = paginate(groups, fmt.get("rows_per_page") if paged else None)
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = fmt["name"]
+    ws.title = fmt["name"] if paged else tpl.ws.title
     for key, dim in tpl.ws.column_dimensions.items():
         ws.column_dimensions[key].width = dim.width
     merges, row, number = [], 1, 0
@@ -260,9 +368,10 @@ def build(groups, tpl, fmt, out_path):
     used_crcs = set()
 
     for p, page in enumerate(pages):
-        for hr in tpl.header_rows:
-            tpl.copy_row(hr, ws, row, merges=merges)
-            row += 1
+        if paged or p == 0:
+            for hr in tpl.header_rows:
+                tpl.copy_row(hr, ws, row, merges=merges)
+                row += 1
         for rec in page:
             number += 1
             tpl.copy_row(tpl.data_row, ws, row, with_values=False)
@@ -282,64 +391,87 @@ def build(groups, tpl, fmt, out_path):
     for r1, c1, r2, c2 in merges:
         ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
 
-    # print setup (matches the template PDFs): exactly 100% scale so borders stay
-    # crisp and the 15 beneficiary rows fill the page.
     ws.print_area = f"A1:{get_column_letter(tpl.last_col)}{row - 1}"
-    ws.page_setup.orientation = ORIENTATION
-    ws.page_setup.paperSize = PAPER_SIZE
-    ws.sheet_properties.pageSetUpPr.fitToPage = False
-    ws.page_setup.scale = 100
-    ws.print_options.horizontalCentered = True
-    ws.page_margins.left = ws.page_margins.right = 0.25
-    ws.page_margins.top = 0.38
-    ws.page_margins.bottom = 0.4
-    ws.page_margins.header = 0.2
-    ws.page_margins.footer = 0.2
+    if paged:
+        # matches the template PDFs: exactly 100% scale so borders stay crisp
+        # and the beneficiary rows fill the page
+        ws.page_setup.orientation = ORIENTATION
+        ws.page_setup.paperSize = PAPER_SIZE
+        ws.sheet_properties.pageSetUpPr.fitToPage = False
+        ws.page_setup.scale = 100
+        ws.print_options.horizontalCentered = True
+        ws.page_margins.left = ws.page_margins.right = 0.25
+        ws.page_margins.top = 0.38
+        ws.page_margins.bottom = 0.4
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+    else:
+        copy_print_setup(tpl.ws, ws)
+        ws.print_title_rows = f"{tpl.header_rows[0]}:{tpl.header_rows[-1]}"
     ws.oddFooter.center.text = "Page &P of &N"
     ws.oddFooter.center.size = 8
 
-    wb.save(out_path)
-    return len(pages)
+    wb.save(out)
+    return f"{len(pages)} pages" if paged else f"{number} rows"
 
 
 def clean_stem(path):
     """'La Trinidad Additional 10-2-26 - AR' -> 'La Trinidad Additional 10-2-26'."""
-    return re.sub(r"[\s_-]+(AR|STUB)$", "", Path(path).stem, flags=re.I).strip() or Path(path).stem
+    stem = Path(str(path)).stem
+    return re.sub(r"[\s_-]+(AR|STUB)$", "", stem, flags=re.I).strip() or stem
 
 
-def generate(source, filename, formats=None, log=print):
-    """Format one masterlist in memory.
-    source: path or file-like object of the masterlist .xlsx; filename: its name.
-    Yields (output file name, xlsx bytes, page count) for every selected format."""
-    records, found = read_masterlist(source)
-    if not records:
-        raise ValueError("no beneficiary rows found")
-    groups = group_by_barangay(records)
-    log(f"{Path(filename).name}: {len(records)} beneficiaries, {len(groups)} barangays")
-    for fmt in formats or FORMATS:
-        tpl = Template(fmt["template"])
-        missing = sorted({f for f in tpl.columns.values() if f not in found and f != "number"})
-        if missing:
-            log(f"   note: masterlist has no {', '.join(m.upper() for m in missing)} column; "
-                f"left blank in {fmt['name']}")
-        buf = io.BytesIO()
-        npages = build(groups, tpl, fmt, buf)
-        yield f"{clean_stem(filename)} - {fmt['name']} FORMAT.xlsx", buf.getvalue(), npages, groups
+def safe_name(text):
+    return re.sub(r'[\\/:*?"<>|]+', "-", str(text)).strip()
 
 
-def process(master_path, out_dir=OUTPUT_DIR, formats=None, log=print):
-    """Format one masterlist into every selected format, saved in out_dir.
-    Returns (list of output paths, barangay groups)."""
+def generate(source, filename, formats=None, log=print, default_amount=DEFAULT_AMOUNT):
+    """Format one masterlist workbook in memory.
+    source: path or file-like object of the .xlsx; filename: its name.
+    Yields (output file name, xlsx bytes, summary, barangay groups) for every
+    data sheet x selected format."""
+    sheets = read_masterlist(source)
+    stem = clean_stem(filename)
+    templates = {f["name"]: Template(f["template"]) for f in formats or FORMATS}
+    for title, records, found in sheets:
+        found = list(found)
+        base = stem if len(sheets) == 1 else f"{stem} - {safe_name(title)}"
+        groups = group_by_barangay(records)
+        log(f"{Path(str(filename)).name}" + (f" [{title}]" if len(sheets) > 1 else "")
+            + f": {len(records)} beneficiaries, {len(groups)} barangays")
+        log(f"   columns found: {', '.join(LABELS[f] for f in found if f in LABELS)}")
+        if default_amount not in (None, "", 0):
+            blanks = [r for r in records if r.get("amount") in (None, "")]
+            for r in blanks:
+                r["amount"] = default_amount
+            if blanks:
+                log(f"   AMOUNT {default_amount:,} used for {len(blanks)} beneficiar"
+                    f"{'y' if len(blanks) == 1 else 'ies'} without an amount")
+                found.append("amount")
+        for fmt in formats or FORMATS:
+            tpl = templates[fmt["name"]]
+            missing = [f for f in tpl.columns.values() if f not in found and f not in NO_NOTE]
+            if missing:
+                log(f"   note: masterlist has no {', '.join(LABELS[m] for m in missing)} column; "
+                    f"left blank in {fmt['label']}")
+            buf = io.BytesIO()
+            summary = build(groups, tpl, fmt, buf)
+            yield f"{base} - {fmt['suffix']}.xlsx", buf.getvalue(), summary, groups
+
+
+def process(master_path, out_dir=OUTPUT_DIR, formats=None, log=print, default_amount=DEFAULT_AMOUNT):
+    """Format one masterlist workbook into every selected format, saved in out_dir.
+    Returns (list of output paths, barangay groups of the last sheet)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs, groups = [], {}
-    for name, data, npages, groups in generate(master_path, master_path, formats, log):
+    for name, data, summary, groups in generate(master_path, master_path, formats, log, default_amount):
         out = out_dir / name
         try:
             out.write_bytes(data)
         except PermissionError:
             raise PermissionError(f"cannot write {out.name} - close it in Excel and try again")
-        log(f"   {name.rsplit(' - ', 1)[-1][:-12]:<5} {npages:>4} pages -> {out}")
+        log(f"   {summary:>10} -> {out.name}")
         outputs.append(out)
     return outputs, groups
 
@@ -353,9 +485,7 @@ def main(argv):
     failed = 0
     for f in files:
         try:
-            _, groups = process(f)
-            for b, recs in groups.items():
-                print(f"       {b:<20} {len(recs):>5}")
+            process(f)
         except Exception as e:
             failed += 1
             print(f"[ERROR] {f.name}: {e}")

@@ -1,4 +1,4 @@
-"""PAFFP Formatter - window for creating AR and STUB files from masterlists."""
+"""PAFFP Formatter - window for creating System Upload, AR and STUB files from masterlists."""
 import os
 import queue
 import threading
@@ -12,12 +12,13 @@ import paffp_formatter as engine
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PAFFP Formatter - AR & STUB")
-        self.geometry("760x560")
+        self.title("PAFFP Formatter - System Upload, AR & STUB")
+        self.geometry("780x600")
         self.minsize(620, 460)
         self.files = []
         self.out_dir = tk.StringVar(value=str(engine.OUTPUT_DIR))
         self.make = {f["name"]: tk.BooleanVar(value=True) for f in engine.FORMATS}
+        self.amount = tk.StringVar(value=str(engine.DEFAULT_AMOUNT or ""))
         self.msgs = queue.Queue()
         self._build()
         self.after(100, self._poll)
@@ -48,8 +49,10 @@ class App(tk.Tk):
         opts = ttk.LabelFrame(self, text="2. What to create")
         opts.pack(fill="x", **pad)
         for f in engine.FORMATS:
-            ttk.Checkbutton(opts, text=f"{f['name']} format", variable=self.make[f["name"]]).pack(
+            ttk.Checkbutton(opts, text=f["label"], variable=self.make[f["name"]]).pack(
                 side="left", padx=10, pady=6)
+        ttk.Entry(opts, textvariable=self.amount, width=9).pack(side="right", padx=(0, 10), pady=6)
+        ttk.Label(opts, text="Amount if missing:").pack(side="right", padx=4)
 
         out = ttk.LabelFrame(self, text="3. Save to folder")
         out.pack(fill="x", **pad)
@@ -121,22 +124,27 @@ class App(tk.Tk):
             messagebox.showwarning("PAFFP Formatter", "Add at least one masterlist file first.")
             return
         if not formats:
-            messagebox.showwarning("PAFFP Formatter", "Tick AR and/or STUB.")
+            messagebox.showwarning("PAFFP Formatter", "Tick at least one output.")
             return
+        amount = self.amount.get().replace(",", "").strip()
+        if amount and not amount.replace(".", "", 1).isdigit():
+            messagebox.showwarning("PAFFP Formatter", "Amount must be a number, e.g. 2325.")
+            return
+        amount = (float(amount) if "." in amount else int(amount)) if amount else None
         self.go.state(["disabled"])
         self.bar.configure(maximum=len(self.files), value=0)
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
-        threading.Thread(target=self._work, args=(list(self.files), formats, self.out_dir.get()),
+        threading.Thread(target=self._work, args=(list(self.files), formats, self.out_dir.get(), amount),
                          daemon=True).start()
 
-    def _work(self, files, formats, out_dir):
+    def _work(self, files, formats, out_dir, amount):
         ok = failed = 0
         for i, f in enumerate(files, 1):
             self.msgs.put(("log", f"Processing {Path(f).name} ..."))
             try:
-                engine.process(f, out_dir=out_dir, formats=formats,
+                engine.process(f, out_dir=out_dir, formats=formats, default_amount=amount,
                                log=lambda s: self.msgs.put(("log", s)))
                 ok += 1
             except Exception as e:
