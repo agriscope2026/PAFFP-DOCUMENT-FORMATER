@@ -1,0 +1,9 @@
+# Never upload beneficiary data or generated files to Vercel
+MASTERLISTS/
+OUTPUT/
+_backup/
+*.pdf
+__pycache__/
+# desktop-only files
+paffp_app.pyw
+PAFFP FORMATTER.bat

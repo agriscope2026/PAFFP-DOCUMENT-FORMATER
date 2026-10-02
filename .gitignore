@@ -1,0 +1,8 @@
+# beneficiary data and generated files must never be committed
+MASTERLISTS/
+OUTPUT/
+_backup/
+*.pdf
+__pycache__/
+.vercel/
+~$*.xlsx

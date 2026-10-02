@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAFFP Formatter</title>
+<meta name="description" content="Create PAFFP AR and STUB files from beneficiary masterlists.">
+<style>
+  :root {
+    --bg: #f4f6f3; --card: #ffffff; --text: #1d2a22; --muted: #5d6b62; --line: #d9e0db;
+    --accent: #1f6f43; --accent-hover: #185a36; --accent-soft: #e5f1ea;
+    --error: #b42318; --error-soft: #fdecea; --warn: #8a5a00; --warn-soft: #fff4dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121714; --card: #1b221e; --text: #e6ece8; --muted: #9aa8a0; --line: #2e3a33;
+      --accent: #4fb07c; --accent-hover: #63c290; --accent-soft: #1f3328;
+      --error: #f08a80; --error-soft: #3a1f1c; --warn: #e8b85a; --warn-soft: #362b17;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  header h1 { margin: 0 0 4px; font-size: 24px; }
+  header p { margin: 0 0 24px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 18px; margin-bottom: 16px; }
+  .step { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+          color: var(--muted); margin: 0 0 10px; }
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px; text-align: center;
+          cursor: pointer; transition: border-color .15s, background .15s; }
+  #drop.over, #drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { color: var(--accent); }
+  #drop small { display: block; color: var(--muted); margin-top: 4px; }
+  ul#files { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul#files li { display: flex; align-items: center; gap: 10px; padding: 9px 4px;
+                border-top: 1px solid var(--line); }
+  ul#files li .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  ul#files li .status { font-size: 13px; color: var(--muted); text-align: right; }
+  ul#files li .status.ok { color: var(--accent); }
+  ul#files li .status.err { color: var(--error); }
+  ul#files li button { border: 0; background: none; color: var(--muted); cursor: pointer;
+                       font-size: 18px; line-height: 1; padding: 2px 6px; }
+  ul#files li button:hover { color: var(--error); }
+  .notes { flex-basis: 100%; font-size: 13px; color: var(--warn); background: var(--warn-soft);
+           border-radius: 6px; padding: 6px 10px; }
+  ul#files li { flex-wrap: wrap; }
+  .opts { display: flex; gap: 24px; flex-wrap: wrap; }
+  .opts label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .opts input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .opts span small { display: block; color: var(--muted); font-size: 12px; }
+  .actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  #go { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 28px;
+        font-size: 16px; font-weight: 700; cursor: pointer; }
+  #go:hover:not(:disabled) { background: var(--accent-hover); }
+  #go:disabled { opacity: .5; cursor: not-allowed; }
+  #msg { color: var(--muted); font-size: 14px; }
+  #msg.err { color: var(--error); }
+  footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
+  footer ul { padding-left: 18px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PAFFP Formatter</h1>
+    <p>Turn beneficiary masterlists into the AR (payroll) and STUB formats, ready to print.</p>
+  </header>
+
+  <section class="card">
+    <p class="step">1 &middot; Masterlist files</p>
+    <div id="drop" tabindex="0" role="button" aria-label="Choose masterlist files">
+      <strong>Choose files</strong> or drag them here
+      <small>Excel masterlists (.xlsx) with RSBSA NO., SURNAME, FIRST NAME and BARANGAY columns</small>
+    </div>
+    <input id="picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
+    <ul id="files"></ul>
+  </section>
+
+  <section class="card">
+    <p class="step">2 &middot; What to create</p>
+    <div class="opts">
+      <label><input type="checkbox" id="fmt-AR" checked>
+        <span>AR format<small>15 beneficiaries per page, with signatories</small></span></label>
+      <label><input type="checkbox" id="fmt-STUB" checked>
+        <span>STUB format<small>20 per page, QR code of the RSBSA number</small></span></label>
+    </div>
+  </section>
+
+  <section class="card actions">
+    <button id="go" disabled>Create</button>
+    <span id="msg">Add at least one masterlist.</span>
+  </section>
+
+  <footer>
+    Each masterlist downloads as a .zip containing its AR and/or STUB Excel files.
+    <ul>
+      <li>Every barangay starts on a new page; numbering continues to the end.</li>
+      <li>Files are processed in memory and are not stored on the server.</li>
+      <li>Print on 8.5&times;13 (long bond) landscape at 100% scale.</li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const drop = document.getElementById("drop");
+  const picker = document.getElementById("picker");
+  const list = document.getElementById("files");
+  const go = document.getElementById("go");
+  const msg = document.getElementById("msg");
+  let items = [];      // {file, li, statusEl}
+  let busy = false;
+
+  const setMsg = (text, isErr = false) => { msg.textContent = text; msg.className = isErr ? "err" : ""; };
+  const refresh = () => {
+    go.disabled = busy || items.length === 0;
+    if (!busy) setMsg(items.length ? `${items.length} file${items.length > 1 ? "s" : ""} ready.` : "Add at least one masterlist.");
+  };
+
+  function addFiles(fileList) {
+    for (const file of fileList) {
+      if (!/\.xlsx?m?$/i.test(file.name)) continue;
+      if (items.some(i => i.file.name === file.name && i.file.size === file.size)) continue;
+      const li = document.createElement("li");
+      const name = document.createElement("span"); name.className = "name"; name.textContent = file.name;
+      const status = document.createElement("span"); status.className = "status";
+      status.textContent = `${(file.size / 1024).toFixed(0)} KB`;
+      const rm = document.createElement("button"); rm.title = "Remove"; rm.textContent = "×";
+      const item = { file, li, statusEl: status };
+      rm.onclick = () => { if (busy) return; items = items.filter(i => i !== item); li.remove(); refresh(); };
+      li.append(name, status, rm);
+      list.append(li);
+      items.push(item);
+    }
+    refresh();
+  }
+
+  drop.onclick = () => picker.click();
+  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); } };
+  picker.onchange = () => { addFiles(picker.files); picker.value = ""; };
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+  function download(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  go.onclick = async () => {
+    const formats = ["AR", "STUB"].filter(f => document.getElementById("fmt-" + f).checked);
+    if (!formats.length) { setMsg("Tick AR and/or STUB.", true); return; }
+    busy = true; refresh();
+    let ok = 0, failed = 0;
+    for (const [n, item] of items.entries()) {
+      setMsg(`Creating ${n + 1} of ${items.length}…`);
+      item.li.querySelector(".notes")?.remove();
+      item.statusEl.className = "status"; item.statusEl.textContent = "Working…";
+      try {
+        const res = await fetch(`/api/generate?name=${encodeURIComponent(item.file.name)}&formats=${formats.join(",")}`,
+                                { method: "POST", body: item.file, headers: { "Content-Type": "application/octet-stream" } });
+        if (!res.ok) {
+          let err = `Server error ${res.status}`;
+          try { err = (await res.json()).error || err; } catch {}
+          throw new Error(err);
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+        const fname = m ? decodeURIComponent(m[1]) : item.file.name.replace(/\.\w+$/, "") + " - PAFFP.zip";
+        let summary = {};
+        try { summary = JSON.parse(decodeURIComponent(res.headers.get("X-Summary") || "")); } catch {}
+        const pages = Object.entries(summary.pages || {}).map(([k, v]) => `${k.split(" - ").pop().replace(" FORMAT.xlsx", "")} ${v} pages`);
+        item.statusEl.className = "status ok";
+        item.statusEl.textContent = "Downloaded" + (pages.length ? ` · ${pages.join(", ")}` : "");
+        const notes = (summary.notes || []).filter(s => s.includes("note:")).map(s => s.replace(/^\s*note:\s*/, ""));
+        if (notes.length) {
+          const d = document.createElement("div"); d.className = "notes"; d.textContent = notes.join(" ");
+          item.li.append(d);
+        }
+        download(blob, fname);
+        ok++;
+      } catch (e) {
+        item.statusEl.className = "status err";
+        item.statusEl.textContent = e.message;
+        failed++;
+      }
+    }
+    busy = false; refresh();
+    setMsg(failed ? `${ok} done, ${failed} failed.` : `Done — ${ok} masterlist${ok > 1 ? "s" : ""} created.`, failed > 0);
+  };
+})();
+</script>
+</body>
+</html>
