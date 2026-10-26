@@ -434,29 +434,39 @@ def generate(source, filename, formats=None, log=print, default_amount=DEFAULT_A
     stem = clean_stem(filename)
     templates = {f["name"]: Template(f["template"]) for f in formats or FORMATS}
     for title, records, found in sheets:
-        found = list(found)
         base = stem if len(sheets) == 1 else f"{stem} - {safe_name(title)}"
-        groups = group_by_barangay(records)
         log(f"{Path(str(filename)).name}" + (f" [{title}]" if len(sheets) > 1 else "")
-            + f": {len(records)} beneficiaries, {len(groups)} barangays")
+            + f": {len(records)} beneficiaries, {len(group_by_barangay(records))} barangays")
         log(f"   columns found: {', '.join(LABELS[f] for f in found if f in LABELS)}")
-        if default_amount not in (None, "", 0):
-            blanks = [r for r in records if r.get("amount") in (None, "")]
-            for r in blanks:
-                r["amount"] = default_amount
-            if blanks:
-                log(f"   AMOUNT {default_amount:,} used for {len(blanks)} beneficiar"
-                    f"{'y' if len(blanks) == 1 else 'ies'} without an amount")
-                found.append("amount")
-        for fmt in formats or FORMATS:
-            tpl = templates[fmt["name"]]
-            missing = [f for f in tpl.columns.values() if f not in found and f not in NO_NOTE]
-            if missing:
-                log(f"   note: masterlist has no {', '.join(LABELS[m] for m in missing)} column; "
-                    f"left blank in {fmt['label']}")
-            buf = io.BytesIO()
-            summary = build(groups, tpl, fmt, buf)
-            yield f"{base} - {fmt['suffix']}.xlsx", buf.getvalue(), summary, groups
+        yield from generate_from_records(records, found, base, formats, log, default_amount, templates)
+
+
+def generate_from_records(records, found, base, formats=None, log=print,
+                          default_amount=DEFAULT_AMOUNT, templates=None):
+    """Build the selected formats from already-read beneficiary records
+    (dicts keyed by field). base: output file name without suffix.
+    Yields (output file name, xlsx bytes, summary, barangay groups)."""
+    formats = formats or FORMATS
+    templates = templates or {f["name"]: Template(f["template"]) for f in formats}
+    found = list(found)
+    groups = group_by_barangay(records)
+    if default_amount not in (None, "", 0):
+        blanks = [r for r in records if r.get("amount") in (None, "")]
+        for r in blanks:
+            r["amount"] = default_amount
+        if blanks:
+            log(f"   AMOUNT {default_amount:,} used for {len(blanks)} beneficiar"
+                f"{'y' if len(blanks) == 1 else 'ies'} without an amount")
+            found.append("amount")
+    for fmt in formats:
+        tpl = templates[fmt["name"]]
+        missing = [f for f in tpl.columns.values() if f not in found and f not in NO_NOTE]
+        if missing:
+            log(f"   note: source has no {', '.join(LABELS[m] for m in missing)} column; "
+                f"left blank in {fmt['label']}")
+        buf = io.BytesIO()
+        summary = build(groups, tpl, fmt, buf)
+        yield f"{base} - {fmt['suffix']}.xlsx", buf.getvalue(), summary, groups
 
 
 def process(master_path, out_dir=OUTPUT_DIR, formats=None, log=print, default_amount=DEFAULT_AMOUNT):

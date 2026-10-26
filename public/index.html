@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PAFFP Formatter</title>
-<meta name="description" content="Create PAFFP System Upload, AR and STUB files from beneficiary masterlists.">
+<meta name="description" content="Create PAFFP System Upload, AR and STUB files from beneficiary masterlists or stub PDFs.">
 <style>
   :root {
     --bg: #f4f6f3; --card: #ffffff; --text: #1d2a22; --muted: #5d6b62; --line: #d9e0db;
@@ -23,29 +23,35 @@
          font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
   main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
   header h1 { margin: 0 0 4px; font-size: 24px; }
-  header p { margin: 0 0 24px; color: var(--muted); }
+  header p { margin: 0 0 20px; color: var(--muted); }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; flex-wrap: wrap; }
+  .tabs button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+                 padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs button:hover { color: var(--text); }
+  .panel[hidden] { display: none; }
+  .intro { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
           padding: 18px; margin-bottom: 16px; }
   .step { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
           color: var(--muted); margin: 0 0 10px; }
-  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px; text-align: center;
+  .drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px; text-align: center;
           cursor: pointer; transition: border-color .15s, background .15s; }
-  #drop.over, #drop:hover { border-color: var(--accent); background: var(--accent-soft); }
-  #drop strong { color: var(--accent); }
-  #drop small { display: block; color: var(--muted); margin-top: 4px; }
-  ul#files { list-style: none; margin: 12px 0 0; padding: 0; }
-  ul#files li { display: flex; align-items: center; gap: 10px; padding: 9px 4px;
-                border-top: 1px solid var(--line); }
-  ul#files li .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  ul#files li .status { font-size: 13px; color: var(--muted); text-align: right; }
-  ul#files li .status.ok { color: var(--accent); }
-  ul#files li .status.err { color: var(--error); }
-  ul#files li button { border: 0; background: none; color: var(--muted); cursor: pointer;
+  .drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { color: var(--accent); }
+  .drop small { display: block; color: var(--muted); margin-top: 4px; }
+  ul.files { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul.files li { display: flex; align-items: center; gap: 10px; padding: 9px 4px;
+                border-top: 1px solid var(--line); flex-wrap: wrap; }
+  ul.files li .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  ul.files li .status { font-size: 13px; color: var(--muted); text-align: right; }
+  ul.files li .status.ok { color: var(--accent); }
+  ul.files li .status.err { color: var(--error); }
+  ul.files li button { border: 0; background: none; color: var(--muted); cursor: pointer;
                        font-size: 18px; line-height: 1; padding: 2px 6px; }
-  ul#files li button:hover { color: var(--error); }
+  ul.files li button:hover { color: var(--error); }
   .notes { flex-basis: 100%; font-size: 13px; color: var(--warn); background: var(--warn-soft);
            border-radius: 6px; padding: 6px 10px; }
-  ul#files li { flex-wrap: wrap; }
   .opts { display: flex; gap: 24px; flex-wrap: wrap; }
   .opts label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .opts input { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -54,12 +60,12 @@
   .amount input { width: 110px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
                   background: var(--bg); color: var(--text); font: inherit; }
   .actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  #go { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 28px;
+  .go { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 28px;
         font-size: 16px; font-weight: 700; cursor: pointer; }
-  #go:hover:not(:disabled) { background: var(--accent-hover); }
-  #go:disabled { opacity: .5; cursor: not-allowed; }
-  #msg { color: var(--muted); font-size: 14px; }
-  #msg.err { color: var(--error); }
+  .go:hover:not(:disabled) { background: var(--accent-hover); }
+  .go:disabled { opacity: .5; cursor: not-allowed; }
+  .msg { color: var(--muted); font-size: 14px; }
+  .msg.err { color: var(--error); }
   footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
   footer ul { padding-left: 18px; margin: 6px 0 0; }
 </style>
@@ -68,40 +74,83 @@
 <main>
   <header>
     <h1>PAFFP Formatter</h1>
-    <p>Turn beneficiary masterlists in any column layout into the System Upload file, the AR (payroll) and the STUB, ready to print.</p>
+    <p>Create the System Upload file, the AR (payroll) and the STUB, ready to print.</p>
   </header>
 
-  <section class="card">
-    <p class="step">1 &middot; Masterlist files</p>
-    <div id="drop" tabindex="0" role="button" aria-label="Choose masterlist files">
-      <strong>Choose files</strong> or drag them here
-      <small>Excel masterlists (.xlsx). Columns can be in any order; each data sheet gets its own files.</small>
-    </div>
-    <input id="picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
-    <ul id="files"></ul>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-master" aria-controls="panel-master" aria-selected="true">From masterlist (Excel)</button>
+    <button role="tab" id="tab-stub" aria-controls="panel-stub" aria-selected="false">New format (STUB sheets)</button>
+  </nav>
+
+  <!-- ===================== TAB 1: masterlist ===================== -->
+  <section class="panel" id="panel-master" role="tabpanel" aria-labelledby="tab-master">
+    <section class="card">
+      <p class="step">1 &middot; Masterlist files</p>
+      <div class="drop" id="m-drop" tabindex="0" role="button" aria-label="Choose masterlist files">
+        <strong>Choose files</strong> or drag them here
+        <small>Excel masterlists (.xlsx). Columns can be in any order; each data sheet gets its own files.</small>
+      </div>
+      <input id="m-picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
+      <ul class="files" id="m-files"></ul>
+    </section>
+
+    <section class="card">
+      <p class="step">2 &middot; What to create</p>
+      <div class="opts">
+        <label><input type="checkbox" id="m-SYSTEM" checked>
+          <span>System upload<small>One continuous list for uploading</small></span></label>
+        <label><input type="checkbox" id="m-AR" checked>
+          <span>AR format<small>15 beneficiaries per page, with signatories</small></span></label>
+        <label><input type="checkbox" id="m-STUB" checked>
+          <span>STUB format<small>20 per page with QR codes, no signatories</small></span></label>
+      </div>
+      <label class="amount">Amount if the masterlist has none
+        <input id="m-amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
+    </section>
+
+    <section class="card actions">
+      <button class="go" id="m-go" disabled>Create</button>
+      <span class="msg" id="m-msg">Add at least one masterlist.</span>
+    </section>
   </section>
 
-  <section class="card">
-    <p class="step">2 &middot; What to create</p>
-    <div class="opts">
-      <label><input type="checkbox" id="fmt-SYSTEM" checked>
-        <span>System upload<small>One continuous list for uploading</small></span></label>
-      <label><input type="checkbox" id="fmt-AR" checked>
-        <span>AR format<small>15 beneficiaries per page, with signatories</small></span></label>
-      <label><input type="checkbox" id="fmt-STUB" checked>
-        <span>STUB format<small>20 per page with QR codes, no signatories</small></span></label>
-    </div>
-    <label class="amount">Amount if the masterlist has none
-      <input id="amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
-  </section>
+  <!-- ===================== TAB 2: new format ===================== -->
+  <section class="panel" id="panel-stub" role="tabpanel" aria-labelledby="tab-stub" hidden>
+    <p class="intro">Upload the source workbook. Only sheets named <strong>STUB &lt;MUNICIPALITY&gt;</strong>
+      (e.g. STUB HUNGDUAN) are used; other sheets are ignored. Each municipality gets the AR and the STUB as PDF
+      (the STUB with a QR code of the RSBSA NO. in the NO column) and the System Upload as Excel.</p>
+    <section class="card">
+      <p class="step">1 &middot; Source workbooks</p>
+      <div class="drop" id="s-drop" tabindex="0" role="button" aria-label="Choose source workbooks">
+        <strong>Choose files</strong> or drag them here
+        <small>Excel workbooks (.xlsx) with sheets named STUB AGUINALDO, STUB HUNGDUAN, ...</small>
+      </div>
+      <input id="s-picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
+      <ul class="files" id="s-files"></ul>
+    </section>
 
-  <section class="card actions">
-    <button id="go" disabled>Create</button>
-    <span id="msg">Add at least one masterlist.</span>
+    <section class="card">
+      <p class="step">2 &middot; What to create</p>
+      <div class="opts">
+        <label><input type="checkbox" id="s-AR" checked>
+          <span>AR format (PDF)<small>14 per page, with signatories</small></span></label>
+        <label><input type="checkbox" id="s-STUB" checked>
+          <span>STUB format (PDF)<small>12 per page, QR code in the NO column</small></span></label>
+        <label><input type="checkbox" id="s-SYSTEM" checked>
+          <span>System upload (Excel)<small>No., RSBSA No., Surname, ...</small></span></label>
+      </div>
+      <label class="amount">AR amount
+        <input id="s-amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
+    </section>
+
+    <section class="card actions">
+      <button class="go" id="s-go" disabled>Create</button>
+      <span class="msg" id="s-msg">Add at least one workbook.</span>
+    </section>
   </section>
 
   <footer>
-    Each masterlist downloads as a .zip containing its System Upload, AR and/or STUB Excel files.
+    Each file downloads as a .zip containing the selected outputs.
     <ul>
       <li>Every barangay starts on a new page; numbering continues to the end.</li>
       <li>Files are processed in memory and are not stored on the server.</li>
@@ -112,44 +161,8 @@
 
 <script>
 (() => {
-  const drop = document.getElementById("drop");
-  const picker = document.getElementById("picker");
-  const list = document.getElementById("files");
-  const go = document.getElementById("go");
-  const msg = document.getElementById("msg");
-  let items = [];      // {file, li, statusEl}
-  let busy = false;
-
-  const setMsg = (text, isErr = false) => { msg.textContent = text; msg.className = isErr ? "err" : ""; };
-  const refresh = () => {
-    go.disabled = busy || items.length === 0;
-    if (!busy) setMsg(items.length ? `${items.length} file${items.length > 1 ? "s" : ""} ready.` : "Add at least one masterlist.");
-  };
-
-  function addFiles(fileList) {
-    for (const file of fileList) {
-      if (!/\.xlsx?m?$/i.test(file.name)) continue;
-      if (items.some(i => i.file.name === file.name && i.file.size === file.size)) continue;
-      const li = document.createElement("li");
-      const name = document.createElement("span"); name.className = "name"; name.textContent = file.name;
-      const status = document.createElement("span"); status.className = "status";
-      status.textContent = `${(file.size / 1024).toFixed(0)} KB`;
-      const rm = document.createElement("button"); rm.title = "Remove"; rm.textContent = "×";
-      const item = { file, li, statusEl: status };
-      rm.onclick = () => { if (busy) return; items = items.filter(i => i !== item); li.remove(); refresh(); };
-      li.append(name, status, rm);
-      list.append(li);
-      items.push(item);
-    }
-    refresh();
-  }
-
-  drop.onclick = () => picker.click();
-  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); } };
-  picker.onchange = () => { addFiles(picker.files); picker.value = ""; };
-  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+  // ---------------------------------------------------------------- shared
+  const $ = id => document.getElementById(id);
 
   function download(blob, filename) {
     const a = document.createElement("a");
@@ -158,52 +171,163 @@
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }
+  async function errorOf(res) {
+    let err = `Server error ${res.status}`;
+    try { err = (await res.json()).error || err; } catch {}
+    return err;
+  }
+  function readAmount(id) {
+    const v = $(id).value.replace(/,/g, "").trim();
+    if (v && !/^\d+(\.\d+)?$/.test(v)) throw new Error("Amount must be a number, e.g. 2325.");
+    return v;
+  }
+  function showNotes(item, notes) {
+    item.li.querySelector(".notes")?.remove();
+    if (!notes.length) return;
+    const d = document.createElement("div"); d.className = "notes"; d.innerText = notes.join("\n");
+    item.li.append(d);
+  }
 
-  go.onclick = async () => {
-    const formats = ["SYSTEM", "AR", "STUB"].filter(f => document.getElementById("fmt-" + f).checked);
-    if (!formats.length) { setMsg("Tick at least one output.", true); return; }
-    const amount = document.getElementById("amount").value.replace(/,/g, "").trim();
-    if (amount && !/^\d+(\.\d+)?$/.test(amount)) { setMsg("Amount must be a number, e.g. 2325.", true); return; }
-    busy = true; refresh();
-    let ok = 0, failed = 0;
-    for (const [n, item] of items.entries()) {
-      setMsg(`Creating ${n + 1} of ${items.length}…`);
-      item.li.querySelector(".notes")?.remove();
-      item.statusEl.className = "status"; item.statusEl.textContent = "Working…";
-      try {
-        const res = await fetch(`/api/generate?name=${encodeURIComponent(item.file.name)}&formats=${formats.join(",")}&amount=${encodeURIComponent(amount)}`,
-                                { method: "POST", body: item.file, headers: { "Content-Type": "application/octet-stream" } });
-        if (!res.ok) {
-          let err = `Server error ${res.status}`;
-          try { err = (await res.json()).error || err; } catch {}
-          throw new Error(err);
+  // A file picker + list + Create button; run(item) does the work for one file.
+  function filePanel(prefix, accept, emptyText, run) {
+    const drop = $(prefix + "-drop"), picker = $(prefix + "-picker"), list = $(prefix + "-files");
+    const go = $(prefix + "-go"), msg = $(prefix + "-msg");
+    let items = [], busy = false;
+    const setMsg = (text, isErr = false) => { msg.textContent = text; msg.className = "msg" + (isErr ? " err" : ""); };
+    const refresh = () => {
+      go.disabled = busy || items.length === 0;
+      if (!busy) setMsg(items.length ? `${items.length} file${items.length > 1 ? "s" : ""} ready.` : emptyText);
+    };
+    function addFiles(fileList) {
+      for (const file of fileList) {
+        if (!accept.test(file.name)) continue;
+        if (items.some(i => i.file.name === file.name && i.file.size === file.size)) continue;
+        const li = document.createElement("li");
+        const name = document.createElement("span"); name.className = "name"; name.textContent = file.name;
+        const status = document.createElement("span"); status.className = "status";
+        status.textContent = `${(file.size / 1024).toFixed(0)} KB`;
+        const rm = document.createElement("button"); rm.title = "Remove"; rm.textContent = "×";
+        const item = { file, li, statusEl: status };
+        rm.onclick = () => { if (busy) return; items = items.filter(i => i !== item); li.remove(); refresh(); };
+        li.append(name, status, rm);
+        list.append(li);
+        items.push(item);
+      }
+      refresh();
+    }
+    drop.onclick = () => picker.click();
+    drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); } };
+    picker.onchange = () => { addFiles(picker.files); picker.value = ""; };
+    ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+    ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+    drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+    go.onclick = async () => {
+      busy = true; refresh();
+      let ok = 0, failed = 0;
+      for (const [n, item] of items.entries()) {
+        setMsg(`Creating ${n + 1} of ${items.length}…`);
+        item.li.querySelector(".notes")?.remove();
+        item.statusEl.className = "status"; item.statusEl.textContent = "Working…";
+        try {
+          await run(item, t => { item.statusEl.textContent = t; });
+          item.statusEl.className = "status ok";
+          ok++;
+        } catch (e) {
+          if (e.stopAll) { busy = false; refresh(); setMsg(e.message, true); item.statusEl.textContent = ""; return; }
+          item.statusEl.className = "status err";
+          item.statusEl.textContent = e.message;
+          failed++;
         }
-        const blob = await res.blob();
+      }
+      busy = false; refresh();
+      setMsg(failed ? `${ok} done, ${failed} failed.` : `Done — ${ok} file${ok > 1 ? "s" : ""} created.`, failed > 0);
+    };
+  }
+  const stop = message => Object.assign(new Error(message), { stopAll: true });
+
+  // ---------------------------------------------------------------- tabs
+  const tabs = [["tab-master", "panel-master"], ["tab-stub", "panel-stub"]];
+  function selectTab(tabId) {
+    for (const [t, p] of tabs) {
+      $(t).setAttribute("aria-selected", String(t === tabId));
+      $(p).hidden = t !== tabId;
+    }
+    try { localStorage.setItem("paffp-tab", tabId); } catch {}
+    if (tabId === "tab-stub") loadStubLibs().catch(() => {});
+  }
+  tabs.forEach(([t]) => $(t).onclick = () => selectTab(t));
+  try { const saved = localStorage.getItem("paffp-tab"); if (saved && $(saved)) selectTab(saved); } catch {}
+
+  // ---------------------------------------------------------------- tab 1: masterlist
+  filePanel("m", /\.xlsx?m?$/i, "Add at least one masterlist.", async (item, status) => {
+    const formats = ["SYSTEM", "AR", "STUB"].filter(f => $("m-" + f).checked);
+    if (!formats.length) throw stop("Tick at least one output.");
+    let amount; try { amount = readAmount("m-amount"); } catch (e) { throw stop(e.message); }
+    const res = await fetch(`/api/generate?name=${encodeURIComponent(item.file.name)}&formats=${formats.join(",")}&amount=${encodeURIComponent(amount)}`,
+                            { method: "POST", body: item.file, headers: { "Content-Type": "application/octet-stream" } });
+    if (!res.ok) throw new Error(await errorOf(res));
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+    const fname = m ? decodeURIComponent(m[1]) : item.file.name.replace(/\.\w+$/, "") + " - PAFFP.zip";
+    let summary = {};
+    try { summary = JSON.parse(decodeURIComponent(res.headers.get("X-Summary") || "")); } catch {}
+    const nfiles = Object.keys(summary.files || {}).length;
+    status(`Downloaded · ${nfiles} file${nfiles === 1 ? "" : "s"}`);
+    showNotes(item, (summary.notes || []).filter(s => /note:|AMOUNT|beneficiaries,/.test(s))
+      .map(s => s.trim().replace(/^note:\s*/, "")));
+    download(blob, fname);
+  });
+
+  // ---------------------------------------------------------------- tab 2: new format
+  let zipReady = null;
+  function loadJSZip() {
+    if (!zipReady) {
+      zipReady = new Promise((ok, fail) => {
+        const s = document.createElement("script");
+        s.src = "vendor/jszip.min.js"; s.onload = ok; s.onerror = () => fail(new Error("Could not load JSZip"));
+        document.head.append(s);
+      });
+      zipReady.catch(() => { zipReady = null; });
+    }
+    return zipReady;
+  }
+  function loadStubLibs() { return loadJSZip(); }
+
+  filePanel("s", /\.xlsx?m?$/i, "Add at least one workbook.", async (item, status) => {
+    const kinds = ["AR", "STUB", "SYSTEM"].filter(k => $("s-" + k).checked);
+    if (!kinds.length) throw stop("Tick at least one output.");
+    let amount; try { amount = readAmount("s-amount"); } catch (e) { throw stop(e.message); }
+    await loadJSZip();
+    status("Reading workbook…");
+    let res = await fetch("/api/newformat?step=read", { method: "POST", body: item.file,
+                                                         headers: { "Content-Type": "application/octet-stream" } });
+    if (!res.ok) throw new Error(await errorOf(res));
+    const { municipalities } = await res.json();
+    const zip = new JSZip();
+    const total = municipalities.length * kinds.length;
+    let done = 0;
+    const notes = [`${municipalities.length} municipalit${municipalities.length === 1 ? "y" : "ies"}: ` +
+                   municipalities.map(m => `${m.municipality} (${m.records.length})`).join(", ")];
+    for (const m of municipalities) {
+      for (const kind of kinds) {
+        status(`${m.municipality} ${kind} · ${++done} of ${total}…`);
+        res = await fetch("/api/newformat?step=render", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, municipality: m, amount }) });
+        if (!res.ok) throw new Error(`${m.municipality} ${kind}: ${await errorOf(res)}`);
         const cd = res.headers.get("Content-Disposition") || "";
-        const m = cd.match(/filename\*=UTF-8''([^;]+)/);
-        const fname = m ? decodeURIComponent(m[1]) : item.file.name.replace(/\.\w+$/, "") + " - PAFFP.zip";
-        let summary = {};
-        try { summary = JSON.parse(decodeURIComponent(res.headers.get("X-Summary") || "")); } catch {}
-        const nfiles = Object.keys(summary.files || {}).length;
-        item.statusEl.className = "status ok";
-        item.statusEl.textContent = `Downloaded · ${nfiles} file${nfiles === 1 ? "" : "s"}`;
-        const notes = (summary.notes || []).filter(s => /note:|AMOUNT|beneficiaries,/.test(s))
-          .map(s => s.trim().replace(/^note:\s*/, ""));
-        if (notes.length) {
-          const d = document.createElement("div"); d.className = "notes"; d.innerText = notes.join("\n");
-          item.li.append(d);
-        }
-        download(blob, fname);
-        ok++;
-      } catch (e) {
-        item.statusEl.className = "status err";
-        item.statusEl.textContent = e.message;
-        failed++;
+        const mm = cd.match(/filename\*=UTF-8''([^;]+)/);
+        zip.file(mm ? decodeURIComponent(mm[1]) : `${m.municipality} - ${kind}`, await res.arrayBuffer());
       }
     }
-    busy = false; refresh();
-    setMsg(failed ? `${ok} done, ${failed} failed.` : `Done — ${ok} masterlist${ok > 1 ? "s" : ""} created.`, failed > 0);
-  };
+    status("Zipping…");
+    const blob = await zip.generateAsync({ type: "blob" });
+    status(`Downloaded · ${Object.keys(zip.files).length} files`);
+    showNotes(item, notes);
+    download(blob, item.file.name.replace(/\.\w+$/, "") + " - NEW FORMAT.zip");
+  });
 })();
 </script>
 </body>

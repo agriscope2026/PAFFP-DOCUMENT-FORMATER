@@ -8,6 +8,11 @@
       "maxDuration": 60,
       "memory": 1024,
       "includeFiles": "{paffp_formatter.py,AR FORMAT.xlsx,STUB FORMAT.xlsx,System Uploading Template.xlsx}"
+    },
+    "api/newformat.py": {
+      "maxDuration": 60,
+      "memory": 2048,
+      "includeFiles": "{newformat.py,paffp_formatter.py,AR FORMAT.xlsx,STUB FORMAT.xlsx,System Uploading Template.xlsx,STUB FORMAT NEW.xlsx,SYSTEM UPLOAD.xlsx,fonts/**}"
     }
   }
 }

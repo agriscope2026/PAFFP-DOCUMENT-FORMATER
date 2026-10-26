@@ -1,4 +1,7 @@
-"""PAFFP Formatter - window for creating System Upload, AR and STUB files from masterlists."""
+"""PAFFP Formatter - window with two tabs:
+  1. From masterlist (Excel) -> System Upload, AR and STUB files
+  2. New format (STUB sheets) -> AR (PDF), STUB with QR codes (PDF), System Upload (Excel)
+"""
 import os
 import queue
 import threading
@@ -9,27 +12,33 @@ from tkinter import filedialog, messagebox, ttk
 import paffp_formatter as engine
 
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("PAFFP Formatter - System Upload, AR & STUB")
-        self.geometry("780x600")
-        self.minsize(620, 460)
+def run_masterlist(path, out_dir, selected, amount, log):
+    formats = [f for f in engine.FORMATS if f["name"] in selected]
+    engine.process(path, out_dir=out_dir, formats=formats, default_amount=amount, log=log)
+
+
+def run_newformat(path, out_dir, selected, amount, log):
+    try:
+        import newformat
+    except ImportError as e:
+        raise RuntimeError(f"{e}. Install it with:  pip install pymupdf qrcode fonttools")
+    kinds = [k for k in ("AR", "STUB", "SYSTEM") if k in selected]
+    newformat.process(path, out_dir, kinds=kinds, amount=amount, log=log)
+
+
+class Panel(ttk.Frame):
+    """Pick files, choose outputs, set amount and folder, run in the background."""
+
+    def __init__(self, master, app, files_title, filetypes, options, amount_label, worker, noun):
+        super().__init__(master)
+        self.app, self.filetypes, self.worker, self.noun = app, filetypes, worker, noun
         self.files = []
-        self.out_dir = tk.StringVar(value=str(engine.OUTPUT_DIR))
-        self.make = {f["name"]: tk.BooleanVar(value=True) for f in engine.FORMATS}
+        self.make = {key: tk.BooleanVar(value=default) for key, _, default in options}
         self.amount = tk.StringVar(value=str(engine.DEFAULT_AMOUNT or ""))
         self.msgs = queue.Queue()
-        self._build()
-        self.after(100, self._poll)
-
-    # ------------------------------------------------------------ layout
-    def _build(self):
         pad = {"padx": 10, "pady": 5}
-        style = ttk.Style(self)
-        style.configure("Go.TButton", font=("Segoe UI", 11, "bold"), padding=8)
 
-        box = ttk.LabelFrame(self, text="1. Masterlist files")
+        box = ttk.LabelFrame(self, text=f"1. {files_title}")
         box.pack(fill="both", expand=True, **pad)
         btns = ttk.Frame(box)
         btns.pack(fill="x", padx=6, pady=4)
@@ -40,7 +49,7 @@ class App(tk.Tk):
         self.count.pack(side="right")
         lst = ttk.Frame(box)
         lst.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self.listbox = tk.Listbox(lst, selectmode="extended", height=6, activestyle="none")
+        self.listbox = tk.Listbox(lst, selectmode="extended", height=5, activestyle="none")
         sb = ttk.Scrollbar(lst, command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=sb.set)
         self.listbox.pack(side="left", fill="both", expand=True)
@@ -48,17 +57,16 @@ class App(tk.Tk):
 
         opts = ttk.LabelFrame(self, text="2. What to create")
         opts.pack(fill="x", **pad)
-        for f in engine.FORMATS:
-            ttk.Checkbutton(opts, text=f["label"], variable=self.make[f["name"]]).pack(
-                side="left", padx=10, pady=6)
+        for key, label, _ in options:
+            ttk.Checkbutton(opts, text=label, variable=self.make[key]).pack(side="left", padx=10, pady=6)
         ttk.Entry(opts, textvariable=self.amount, width=9).pack(side="right", padx=(0, 10), pady=6)
-        ttk.Label(opts, text="Amount if missing:").pack(side="right", padx=4)
+        ttk.Label(opts, text=amount_label).pack(side="right", padx=4)
 
         out = ttk.LabelFrame(self, text="3. Save to folder")
         out.pack(fill="x", **pad)
-        ttk.Entry(out, textvariable=self.out_dir).pack(side="left", fill="x", expand=True, padx=6, pady=6)
-        ttk.Button(out, text="Browse...", command=self.pick_out).pack(side="left", padx=(0, 6))
-        ttk.Button(out, text="Open folder", command=self.open_out).pack(side="left", padx=(0, 6))
+        ttk.Entry(out, textvariable=app.out_dir).pack(side="left", fill="x", expand=True, padx=6, pady=6)
+        ttk.Button(out, text="Browse...", command=app.pick_out).pack(side="left", padx=(0, 6))
+        ttk.Button(out, text="Open folder", command=app.open_out).pack(side="left", padx=(0, 6))
 
         run = ttk.Frame(self)
         run.pack(fill="x", **pad)
@@ -74,13 +82,13 @@ class App(tk.Tk):
         self.log.configure(yscrollcommand=lsb.set)
         self.log.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         lsb.pack(side="right", fill="y", pady=6)
+        self.after(100, self._poll)
 
-    # ------------------------------------------------------------ actions
+    # ------------------------------------------------------------ files
     def add_files(self):
         start = engine.INPUT_DIR if engine.INPUT_DIR.exists() else engine.BASE_DIR
-        picked = filedialog.askopenfilenames(
-            title="Select masterlist files", initialdir=start,
-            filetypes=[("Excel files", "*.xlsx *.xlsm"), ("All files", "*.*")])
+        picked = filedialog.askopenfilenames(title=f"Select {self.noun} files", initialdir=start,
+                                             filetypes=self.filetypes + [("All files", "*.*")])
         for p in picked:
             if p not in self.files:
                 self.files.append(p)
@@ -102,16 +110,7 @@ class App(tk.Tk):
         n = len(self.files)
         self.count.config(text=f"{n} file{'s' if n != 1 else ''} selected" if n else "No files selected")
 
-    def pick_out(self):
-        d = filedialog.askdirectory(title="Save output files to", initialdir=self.out_dir.get())
-        if d:
-            self.out_dir.set(d)
-
-    def open_out(self):
-        d = Path(self.out_dir.get())
-        d.mkdir(parents=True, exist_ok=True)
-        os.startfile(d)
-
+    # ------------------------------------------------------------ run
     def write(self, text):
         self.log.configure(state="normal")
         self.log.insert("end", text + "\n")
@@ -119,11 +118,11 @@ class App(tk.Tk):
         self.log.configure(state="disabled")
 
     def start(self):
-        formats = [f for f in engine.FORMATS if self.make[f["name"]].get()]
+        selected = [k for k, v in self.make.items() if v.get()]
         if not self.files:
-            messagebox.showwarning("PAFFP Formatter", "Add at least one masterlist file first.")
+            messagebox.showwarning("PAFFP Formatter", f"Add at least one {self.noun} file first.")
             return
-        if not formats:
+        if not selected:
             messagebox.showwarning("PAFFP Formatter", "Tick at least one output.")
             return
         amount = self.amount.get().replace(",", "").strip()
@@ -136,16 +135,15 @@ class App(tk.Tk):
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
-        threading.Thread(target=self._work, args=(list(self.files), formats, self.out_dir.get(), amount),
+        threading.Thread(target=self._work, args=(list(self.files), selected, self.app.out_dir.get(), amount),
                          daemon=True).start()
 
-    def _work(self, files, formats, out_dir, amount):
+    def _work(self, files, selected, out_dir, amount):
         ok = failed = 0
         for i, f in enumerate(files, 1):
             self.msgs.put(("log", f"Processing {Path(f).name} ..."))
             try:
-                engine.process(f, out_dir=out_dir, formats=formats, default_amount=amount,
-                               log=lambda s: self.msgs.put(("log", s)))
+                self.worker(f, out_dir, selected, amount, lambda s: self.msgs.put(("log", s)))
                 ok += 1
             except Exception as e:
                 failed += 1
@@ -164,16 +162,51 @@ class App(tk.Tk):
                 elif kind == "done":
                     ok, failed, out_dir = data
                     self.go.state(["!disabled"])
-                    self.write(f"\nDone: {ok} masterlist(s) formatted, {failed} failed.")
+                    self.write(f"\nDone: {ok} file(s) formatted, {failed} failed.")
                     if failed:
                         messagebox.showerror("PAFFP Formatter",
                                              f"{ok} done, {failed} failed. See the Status box for details.")
                     elif messagebox.askyesno("PAFFP Formatter",
-                                             f"Finished {ok} masterlist(s).\n\nOpen the output folder?"):
+                                             f"Finished {ok} file(s).\n\nOpen the output folder?"):
                         os.startfile(out_dir)
         except queue.Empty:
             pass
         self.after(100, self._poll)
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("PAFFP Formatter - System Upload, AR & STUB")
+        self.geometry("800x640")
+        self.minsize(640, 500)
+        self.out_dir = tk.StringVar(value=str(engine.OUTPUT_DIR))
+        ttk.Style(self).configure("Go.TButton", font=("Segoe UI", 11, "bold"), padding=8)
+
+        tabs = ttk.Notebook(self)
+        tabs.pack(fill="both", expand=True, padx=6, pady=6)
+        self.master_tab = Panel(
+            tabs, self, "Masterlist files", [("Excel files", "*.xlsx *.xlsm")],
+            [(f["name"], f["label"], True) for f in engine.FORMATS],
+            "Amount if missing:", run_masterlist, "masterlist")
+        self.stub_tab = Panel(
+            tabs, self, 'Source workbooks (only sheets named "STUB <MUNICIPALITY>" are used)',
+            [("Excel files", "*.xlsx *.xlsm")],
+            [("AR", "AR format (PDF)", True), ("STUB", "STUB format with QR (PDF)", True),
+             ("SYSTEM", "System upload (Excel)", True)],
+            "AR amount:", run_newformat, "source workbook")
+        tabs.add(self.master_tab, text="  From masterlist (Excel)  ")
+        tabs.add(self.stub_tab, text="  New format (STUB sheets)  ")
+
+    def pick_out(self):
+        d = filedialog.askdirectory(title="Save output files to", initialdir=self.out_dir.get())
+        if d:
+            self.out_dir.set(d)
+
+    def open_out(self):
+        d = Path(self.out_dir.get())
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(d)
 
 
 if __name__ == "__main__":
