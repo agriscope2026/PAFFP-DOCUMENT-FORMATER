@@ -57,6 +57,9 @@
   .opts input { width: 18px; height: 18px; accent-color: var(--accent); }
   .opts span small { display: block; color: var(--muted); font-size: 12px; }
   .amount { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 14px; }
+  .fields { display: flex; gap: 8px 28px; flex-wrap: wrap; }
+  .hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  #s-province { width: 180px; text-transform: uppercase; }
   .amount input { width: 110px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
                   background: var(--bg); color: var(--text); font: inherit; }
   .actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
@@ -139,8 +142,14 @@
         <label><input type="checkbox" id="s-SYSTEM" checked>
           <span>System upload (Excel)<small>No., RSBSA No., Surname, ...</small></span></label>
       </div>
-      <label class="amount">AR amount
-        <input id="s-amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
+      <div class="fields">
+        <label class="amount">Province
+          <input id="s-province" type="text" placeholder="e.g. IFUGAO" autocomplete="off" maxlength="60"></label>
+        <label class="amount">AR amount
+          <input id="s-amount" type="text" inputmode="decimal" value="2325" autocomplete="off"></label>
+      </div>
+      <p class="hint">Province is printed in the heading of the AR and STUB. Leave it empty to use the
+        Province written on each STUB sheet.</p>
     </section>
 
     <section class="card actions">
@@ -294,11 +303,14 @@
     return zipReady;
   }
   function loadStubLibs() { return loadJSZip(); }
+  try { $("s-province").value = localStorage.getItem("paffp-province") || ""; } catch {}
 
   filePanel("s", /\.xlsx?m?$/i, "Add at least one workbook.", async (item, status) => {
     const kinds = ["AR", "STUB", "SYSTEM"].filter(k => $("s-" + k).checked);
     if (!kinds.length) throw stop("Tick at least one output.");
     let amount; try { amount = readAmount("s-amount"); } catch (e) { throw stop(e.message); }
+    const province = $("s-province").value.trim().toUpperCase();
+    try { localStorage.setItem("paffp-province", province); } catch {}
     await loadJSZip();
     status("Reading workbook…");
     let res = await fetch("/api/newformat?step=read", { method: "POST", body: item.file,
@@ -308,14 +320,15 @@
     const zip = new JSZip();
     const total = municipalities.length * kinds.length;
     let done = 0;
-    const notes = [`${municipalities.length} municipalit${municipalities.length === 1 ? "y" : "ies"}: ` +
+    const notes = [`Province: ${province || "from each STUB sheet"}`,
+                   `${municipalities.length} municipalit${municipalities.length === 1 ? "y" : "ies"}: ` +
                    municipalities.map(m => `${m.municipality} (${m.records.length})`).join(", ")];
     for (const m of municipalities) {
       for (const kind of kinds) {
         status(`${m.municipality} ${kind} · ${++done} of ${total}…`);
         res = await fetch("/api/newformat?step=render", { method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind, municipality: m, amount }) });
+          body: JSON.stringify({ kind, municipality: m, amount, province }) });
         if (!res.ok) throw new Error(`${m.municipality} ${kind}: ${await errorOf(res)}`);
         const cd = res.headers.get("Content-Disposition") || "";
         const mm = cd.match(/filename\*=UTF-8''([^;]+)/);

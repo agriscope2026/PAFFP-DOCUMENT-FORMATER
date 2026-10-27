@@ -16,10 +16,12 @@ Upload the source workbook (like `sample to format.xlsx`). Only sheets named `ST
 
 - `<MUNICIPALITY> - AR FORMAT.pdf` – layout of `AR FORMAT NEW.pdf`: 14 per page, signatories at the end
 - `<MUNICIPALITY> - STUB FORMAT.pdf` – layout of `STUB FORMAT NEW.xlsx`: 12 per page, QR code of the
-  RSBSA NO. in the NO column (above the number; `STUB["qr_layout"] = "beside"` puts it beside)
+  RSBSA NO. in its own last column (QR CODE), left/right margins from the template (0.75 in)
 - `<MUNICIPALITY> - SYSTEM UPLOAD.xlsx` – `SYSTEM UPLOAD.xlsx` filled in (EXT. NAME is added to First Name)
 
-Every barangay starts on a new page. Region/Province come from each STUB sheet's title rows.
+Every barangay starts on a new page. The **Province** box on the tab sets the Province line in the
+AR and STUB heading (e.g. IFUGAO); left empty, the Province written on each STUB sheet is used.
+Region comes from each STUB sheet's title rows.
 Code: `newformat.py` (desktop and `api/newformat.py` on the web). Signatory names and the AR layout
 are at the top of `newformat.py`. Fonts: Cambria on Windows; on the web the bundled Caladea
 (`fonts/`, SIL Open Font License), which is designed to match Cambria.

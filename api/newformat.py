@@ -4,7 +4,8 @@ Step 1  POST /api/newformat?step=read      body = the source workbook (.xlsx)
         -> JSON {"municipalities": [{"municipality", "region", "province", "records"}]}
         (only sheets named "STUB <MUNICIPALITY>")
 Step 2  POST /api/newformat?step=render    JSON {"kind": "AR"|"STUB"|"SYSTEM",
-                                                  "municipality": {...from step 1...}, "amount": 2325}
+                                                  "municipality": {...from step 1...}, "amount": 2325,
+                                                  "province": "IFUGAO"}   (empty = Province on the sheet)
         -> the file (AR/STUB as PDF, SYSTEM as .xlsx)
 One file per request keeps every response under Vercel's 4.5 MB limit.
 """
@@ -45,7 +46,7 @@ class handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "Nothing to render."})
                 amount = str(req.get("amount", newformat.DEFAULT_AMOUNT) or "").replace(",", "").strip()
                 amount = (float(amount) if "." in amount else int(amount)) if amount else None
-                name, data = newformat.render(kind, muni, amount)
+                name, data = newformat.render(kind, muni, amount, str(req.get("province") or "")[:60])
                 self.send_response(200)
                 self.send_header("Content-Type", TYPES[name.rsplit(".", 1)[-1]])
                 self.send_header("Content-Length", str(len(data)))

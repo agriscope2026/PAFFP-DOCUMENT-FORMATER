@@ -499,15 +499,27 @@ def build_system(muni):
 OUTPUTS = [("AR", "AR FORMAT", "pdf"), ("STUB", "STUB FORMAT", "pdf"), ("SYSTEM", "SYSTEM UPLOAD", "xlsx")]
 
 
-def render(kind, muni, amount=DEFAULT_AMOUNT):
-    """Returns (file name, bytes) for one output of one municipality."""
+def province_line(province):
+    """'ifugao' -> 'Province : IFUGAO' (also accepts 'Province : IFUGAO')."""
+    name = re.sub(r"^\s*province\s*:?\s*", "", str(province or ""), flags=re.I).strip()
+    return f"Province : {name.upper()}" if name else None
+
+
+def render(kind, muni, amount=DEFAULT_AMOUNT, province=None):
+    """Returns (file name, bytes) for one output of one municipality.
+    province: what to print on the Province line of the AR/STUB heading
+    (e.g. "IFUGAO"); empty = the Province written on the STUB sheet."""
     label, ext = next((l, e) for k, l, e in OUTPUTS if k == kind)
+    line = province_line(province)
+    if line:
+        muni = dict(muni, province=line)
     data = (render_ar(muni, amount) if kind == "AR" else render_stub(muni) if kind == "STUB"
             else build_system(muni))
     return f"{engine.safe_name(muni['municipality'])} - {label}.{ext}", data
 
 
-def process(source, out_dir, kinds=("AR", "STUB", "SYSTEM"), amount=DEFAULT_AMOUNT, log=print):
+def process(source, out_dir, kinds=("AR", "STUB", "SYSTEM"), amount=DEFAULT_AMOUNT, log=print,
+            province=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     munis = read_source(source)
@@ -516,9 +528,10 @@ def process(source, out_dir, kinds=("AR", "STUB", "SYSTEM"), amount=DEFAULT_AMOU
     written = []
     for m in munis:
         log(f"   {m['municipality']}: {len(m['records'])} beneficiaries, "
+            f"{province_line(province) or m['province']}, "
             f"{len(engine.group_by_barangay(m['records']))} barangays")
         for kind in kinds:
-            name, data = render(kind, m, amount)
+            name, data = render(kind, m, amount, province)
             path = out_dir / name
             try:
                 path.write_bytes(data)

@@ -17,24 +17,26 @@ def run_masterlist(path, out_dir, selected, amount, log):
     engine.process(path, out_dir=out_dir, formats=formats, default_amount=amount, log=log)
 
 
-def run_newformat(path, out_dir, selected, amount, log):
+def run_newformat(path, out_dir, selected, amount, log, province=""):
     try:
         import newformat
     except ImportError as e:
         raise RuntimeError(f"{e}. Install it with:  pip install pymupdf qrcode fonttools")
     kinds = [k for k in ("AR", "STUB", "SYSTEM") if k in selected]
-    newformat.process(path, out_dir, kinds=kinds, amount=amount, log=log)
+    newformat.process(path, out_dir, kinds=kinds, amount=amount, log=log, province=province)
 
 
 class Panel(ttk.Frame):
     """Pick files, choose outputs, set amount and folder, run in the background."""
 
-    def __init__(self, master, app, files_title, filetypes, options, amount_label, worker, noun):
+    def __init__(self, master, app, files_title, filetypes, options, amount_label, worker, noun,
+                 province_field=False):
         super().__init__(master)
         self.app, self.filetypes, self.worker, self.noun = app, filetypes, worker, noun
         self.files = []
         self.make = {key: tk.BooleanVar(value=default) for key, _, default in options}
         self.amount = tk.StringVar(value=str(engine.DEFAULT_AMOUNT or ""))
+        self.province = tk.StringVar() if province_field else None
         self.msgs = queue.Queue()
         pad = {"padx": 10, "pady": 5}
 
@@ -61,6 +63,14 @@ class Panel(ttk.Frame):
             ttk.Checkbutton(opts, text=label, variable=self.make[key]).pack(side="left", padx=10, pady=6)
         ttk.Entry(opts, textvariable=self.amount, width=9).pack(side="right", padx=(0, 10), pady=6)
         ttk.Label(opts, text=amount_label).pack(side="right", padx=4)
+        if province_field:
+            prov = ttk.Frame(self)
+            prov.pack(fill="x", padx=10, pady=(0, 5))
+            ttk.Label(prov, text="Province:").pack(side="left", padx=(6, 4))
+            ttk.Entry(prov, textvariable=self.province, width=22).pack(side="left")
+            ttk.Label(prov, text="printed in the AR and STUB heading (e.g. IFUGAO); "
+                                 "empty = the Province on each STUB sheet",
+                      foreground="#5d6b62").pack(side="left", padx=8)
 
         out = ttk.LabelFrame(self, text="3. Save to folder")
         out.pack(fill="x", **pad)
@@ -135,15 +145,16 @@ class Panel(ttk.Frame):
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
-        threading.Thread(target=self._work, args=(list(self.files), selected, self.app.out_dir.get(), amount),
+        extra = {"province": self.province.get().strip().upper()} if self.province else {}
+        threading.Thread(target=self._work, args=(list(self.files), selected, self.app.out_dir.get(), amount, extra),
                          daemon=True).start()
 
-    def _work(self, files, selected, out_dir, amount):
+    def _work(self, files, selected, out_dir, amount, extra):
         ok = failed = 0
         for i, f in enumerate(files, 1):
             self.msgs.put(("log", f"Processing {Path(f).name} ..."))
             try:
-                self.worker(f, out_dir, selected, amount, lambda s: self.msgs.put(("log", s)))
+                self.worker(f, out_dir, selected, amount, lambda s: self.msgs.put(("log", s)), **extra)
                 ok += 1
             except Exception as e:
                 failed += 1
@@ -194,7 +205,7 @@ class App(tk.Tk):
             [("Excel files", "*.xlsx *.xlsm")],
             [("AR", "AR format (PDF)", True), ("STUB", "STUB format with QR (PDF)", True),
              ("SYSTEM", "System upload (Excel)", True)],
-            "AR amount:", run_newformat, "source workbook")
+            "AR amount:", run_newformat, "source workbook", province_field=True)
         tabs.add(self.master_tab, text="  From masterlist (Excel)  ")
         tabs.add(self.stub_tab, text="  New format (STUB sheets)  ")
 
