@@ -156,16 +156,102 @@ def map_columns(cells):
     return cols
 
 
-def find_heading_row(ws, max_scan=30):
-    """Row (within the first max_scan rows) whose cells match the most fields."""
+def heading_in_rows(rows):
+    """(row number, {field: column}) of the row whose cells match the most fields
+    (both 1-based), or (None, {}). rows: lists of cell values."""
     best = (0, None, {})
-    for r in range(1, min(ws.max_row, max_scan) + 1):
-        cells = [(c.value, c.column) for c in ws[r] if c.value not in (None, "")]
+    for r, row in enumerate(rows, 1):
+        cells = [(v, c) for c, v in enumerate(row, 1) if v not in (None, "")]
         cols = map_columns(cells)
         score = len(cols) + (2 if "rsbsa" in cols else 0)
         if len(cols) >= 2 and any(f in cols for f in NAME_FIELDS) and score > best[0]:
             best = (score, r, cols)
     return best[1], best[2]
+
+
+def find_heading_row(ws, max_scan=30):
+    """Row (within the first max_scan rows) whose cells match the most fields."""
+    return heading_in_rows(ws.iter_rows(max_row=min(ws.max_row, max_scan), values_only=True))
+
+
+# ---------------------------------------------------------------- PDF input
+def _is_beneficiary(rec):
+    """A table row of a PDF that holds a beneficiary (not a title, total or signatory line)."""
+    if "rsbsa" in rec:
+        return bool(re.search(r"\d", str(rec.get("rsbsa") or "")))
+    if not any(rec.get(f) for f in NAME_FIELDS):
+        return False
+    return "number" not in rec or bool(re.fullmatch(r"\d+\.?", str(rec.get("number") or "")))
+
+
+def _number(v):
+    """'2,325' -> 2325, '2,325.50' -> 2325.5; anything else unchanged."""
+    s = str(v or "").replace(",", "").strip()
+    if re.fullmatch(r"\d+", s):
+        return int(s)
+    if re.fullmatch(r"\d+\.\d+", s):
+        return float(s)
+    return v
+
+
+def pdf_to_workbook(data, title="PDF"):
+    """The tables of a PDF (text PDF, e.g. an AR/STUB printout or an exported
+    masterlist) as one worksheet: the title rows above the first heading row, one
+    heading row, then every beneficiary row of every page. Columns are found by
+    their heading text on each page, so the pages need not have the same layout."""
+    import pymupdf
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    heads = {}                     # field -> (column in the sheet, heading text)
+    titles, records = [], []
+    prev = None                    # (column count, cols) of the last table, for pages without headings
+    for page in doc:
+        for tab in page.find_tables().tables:
+            rows = [[re.sub(r"\s+", " ", v).strip() if isinstance(v, str) else v for v in r]
+                    for r in tab.extract()]
+            hr, cols = heading_in_rows(rows)
+            if hr:
+                if not heads:
+                    titles = rows[:hr - 1]
+                for f, c in cols.items():
+                    heads.setdefault(f, (len(heads) + 1, rows[hr - 1][c - 1]))
+                prev = (tab.col_count, cols)
+            elif prev and prev[0] == tab.col_count:
+                hr, cols = 0, prev[1]                  # table continued without its headings
+            else:
+                continue
+            for row in rows[hr:]:
+                rec = {f: row[c - 1] for f, c in cols.items() if c - 1 < len(row)}
+                if _is_beneficiary(rec):
+                    records.append(rec)
+    doc.close()
+    if not heads:
+        raise ValueError("no table with column headings (e.g. RSBSA NO., SURNAME, FIRST NAME) found "
+                         "in the PDF - a scanned PDF has no text to read")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = re.sub(r"[\\/*?:\[\]]", " ", title).strip()[:31] or "PDF"
+    for t in titles:
+        ws.append(t)
+    heading = [None] * len(heads)
+    for c, text in heads.values():
+        heading[c - 1] = text
+    ws.append(heading)
+    for rec in records:
+        row = [None] * len(heads)
+        for f, v in rec.items():
+            row[heads[f][0] - 1] = _number(v) if f == "amount" else v
+        ws.append(row)
+    return wb
+
+
+def open_workbook(source, name=None):
+    """Workbook of an uploaded file: an Excel file, or a PDF (read by pdf_to_workbook).
+    source: path or file-like object; name: the file name (default: the path's)."""
+    data = Path(source).read_bytes() if isinstance(source, (str, Path)) else source.read()
+    name = name or (str(source) if isinstance(source, (str, Path)) else "")
+    if data[:5] == b"%PDF-":
+        return pdf_to_workbook(data, Path(name).stem if name else "PDF")
+    return openpyxl.load_workbook(io.BytesIO(data), data_only=True)
 
 
 # ---------------------------------------------------------------- template
@@ -223,6 +309,11 @@ def split_full_name(name):
     return words[-1], " ".join(words[:-1]), None
 
 
+def blank_ext(ext):
+    """True for an empty name extension: blank, N/A, NONE, -, or 0."""
+    return str("" if ext is None else ext).strip().upper() in ("", "N/A", "NA", "NONE", "-", "0", "0.0")
+
+
 def read_sheet(ws, hr, cols):
     """Beneficiary records of one sheet. Returns (records, sorted fields found)."""
     heading_text = {f: norm(ws.cell(hr, c).value) for f, c in cols.items()}
@@ -241,8 +332,10 @@ def read_sheet(ws, hr, cols):
             s, f, m = split_full_name(rec["fullname"])
             rec["surname"], rec["first"] = s, f
             rec["middle"] = rec.get("middle") or m
+        if blank_ext(rec.get("ext")):
+            rec["ext"] = None
         ext = str(rec.get("ext") or "").strip()
-        if ext and ext.upper() not in ("N/A", "NA", "NONE", "-") and rec.get("first"):
+        if ext and rec.get("first"):
             first = str(rec["first"])
             if not norm(first).endswith(norm(ext)):
                 rec["first"] = f"{first} {ext}"
@@ -256,11 +349,11 @@ def read_sheet(ws, hr, cols):
     return records, sorted(found)
 
 
-def read_masterlist(source):
-    """All data sheets of a masterlist workbook, in sheet order.
+def read_masterlist(source, name=None):
+    """All data sheets of a masterlist workbook (or the tables of a PDF), in sheet order.
     Columns may be in any order and any may be missing.
     Returns [(sheet title, records, fields found)] (sheets without beneficiaries skipped)."""
-    wb = openpyxl.load_workbook(source, data_only=True)
+    wb = open_workbook(source, name)
     sheets = []
     for ws in wb.worksheets:
         if ws.sheet_state != "visible":
@@ -418,9 +511,10 @@ def build(groups, tpl, fmt, out):
 
 
 def clean_stem(path):
-    """'La Trinidad Additional 10-2-26 - AR' -> 'La Trinidad Additional 10-2-26'."""
+    """'La Trinidad Additional 10-2-26 - AR' -> 'La Trinidad Additional 10-2-26'
+    (also '... - AR FORMAT' / '... - STUB FORMAT')."""
     stem = Path(str(path)).stem
-    return re.sub(r"[\s_-]+(AR|STUB)$", "", stem, flags=re.I).strip() or stem
+    return re.sub(r"[\s_-]+(AR|STUB)(\s+FORMAT)?$", "", stem, flags=re.I).strip() or stem
 
 
 def safe_name(text):
@@ -432,7 +526,7 @@ def generate(source, filename, formats=None, log=print, default_amount=DEFAULT_A
     source: path or file-like object of the .xlsx; filename: its name.
     Yields (output file name, xlsx bytes, summary, barangay groups) for every
     data sheet x selected format."""
-    sheets = read_masterlist(source)
+    sheets = read_masterlist(source, str(filename))
     stem = clean_stem(filename)
     templates = {f["name"]: Template(f["template"]) for f in formats or FORMATS}
     for title, records, found in sheets:
@@ -490,9 +584,10 @@ def process(master_path, out_dir=OUTPUT_DIR, formats=None, log=print, default_am
 
 def main(argv):
     files = [Path(a) for a in argv] or sorted(
-        p for p in INPUT_DIR.glob("*.xlsx") if not p.name.startswith("~$"))
+        p for p in INPUT_DIR.iterdir() if p.suffix.lower() in (".xlsx", ".xlsm", ".pdf")
+        and not p.name.startswith("~$"))
     if not files:
-        print(f"No masterlists found. Put .xlsx files in: {INPUT_DIR}")
+        print(f"No masterlists found. Put .xlsx or .pdf files in: {INPUT_DIR}")
         return 1
     failed = 0
     for f in files:

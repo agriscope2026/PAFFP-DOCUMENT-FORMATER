@@ -235,7 +235,7 @@ def _sheet_records(ws, hr, cols):
             s, fn, mi = engine.split_full_name(rec["fullname"])
             rec["surname"], rec["first"] = s, fn
             rec["middle"] = rec.get("middle") or mi
-        if str(rec.get("ext") or "").strip().upper() in ("N/A", "NA", "NONE", "-"):
+        if engine.blank_ext(rec.get("ext")):
             rec["ext"] = None
         records.append(rec)
     return records
@@ -254,15 +254,17 @@ def _title_lines(ws, hr):
     return region, province
 
 
-def read_source(source):
+def read_source(source, name=None):
     """Municipalities of the source workbook.
     Sheets named "STUB <MUNICIPALITY>" are used when there are any (other sheets
     are then ignored). Otherwise every sheet with column headings is read, e.g. a
     system upload/export like rsbsa_no, first_name, last_name, farmer_address_bgy ...
     in any column order, and its beneficiaries are split by their MUNICIPALITY
     column (the sheet name when there is none).
+    A PDF is read from its tables (engine.pdf_to_workbook); a PDF named like
+    "STUB HUNGDUAN.pdf" counts as a STUB sheet.
     Returns [{"municipality", "sheet", "region", "province", "records"}]."""
-    wb = openpyxl.load_workbook(source, data_only=True)
+    wb = engine.open_workbook(source, name)
     sheets = []
     for ws in wb.worksheets:
         if ws.sheet_state != "visible":

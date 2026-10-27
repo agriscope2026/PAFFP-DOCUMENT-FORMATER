@@ -91,9 +91,9 @@
       <p class="step">1 &middot; Masterlist files</p>
       <div class="drop" id="m-drop" tabindex="0" role="button" aria-label="Choose masterlist files">
         <strong>Choose files</strong> or drag them here
-        <small>Excel masterlists (.xlsx). Columns can be in any order; each data sheet gets its own files.</small>
+        <small>Excel masterlists (.xlsx) or PDFs with a table. Columns can be in any order; each data sheet gets its own files.</small>
       </div>
-      <input id="m-picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
+      <input id="m-picker" type="file" accept=".xlsx,.xlsm,.pdf" multiple hidden>
       <ul class="files" id="m-files"></ul>
     </section>
 
@@ -128,9 +128,9 @@
       <p class="step">1 &middot; Source workbooks</p>
       <div class="drop" id="s-drop" tabindex="0" role="button" aria-label="Choose source workbooks">
         <strong>Choose files</strong> or drag them here
-        <small>Excel workbooks (.xlsx) with sheets named STUB AGUINALDO, STUB HUNGDUAN, ...</small>
+        <small>Excel workbooks (.xlsx) with sheets named STUB AGUINALDO, STUB HUNGDUAN, ..., any list, or a PDF with a table</small>
       </div>
-      <input id="s-picker" type="file" accept=".xlsx,.xlsm" multiple hidden>
+      <input id="s-picker" type="file" accept=".xlsx,.xlsm,.pdf" multiple hidden>
       <ul class="files" id="s-files"></ul>
     </section>
 
@@ -271,7 +271,7 @@
   try { const saved = localStorage.getItem("paffp-tab"); if (saved && $(saved)) selectTab(saved); } catch {}
 
   // ---------------------------------------------------------------- tab 1: masterlist
-  filePanel("m", /\.xlsx?m?$/i, "Add at least one masterlist.", async (item, status) => {
+  filePanel("m", /\.(xlsx|xlsm|pdf)$/i, "Add at least one masterlist.", async (item, status) => {
     const formats = ["SYSTEM", "AR", "STUB"].filter(f => $("m-" + f).checked);
     if (!formats.length) throw stop("Tick at least one output.");
     let amount; try { amount = readAmount("m-amount"); } catch (e) { throw stop(e.message); }
@@ -307,7 +307,7 @@
   function loadStubLibs() { return loadJSZip(); }
   try { $("s-province").value = localStorage.getItem("paffp-province") || ""; } catch {}
 
-  filePanel("s", /\.xlsx?m?$/i, "Add at least one workbook.", async (item, status) => {
+  filePanel("s", /\.(xlsx|xlsm|pdf)$/i, "Add at least one workbook.", async (item, status) => {
     const kinds = ["AR", "STUB", "SYSTEM"].filter(k => $("s-" + k).checked);
     if (!kinds.length) throw stop("Tick at least one output.");
     let amount; try { amount = readAmount("s-amount"); } catch (e) { throw stop(e.message); }
@@ -315,7 +315,7 @@
     try { localStorage.setItem("paffp-province", province); } catch {}
     await loadJSZip();
     status("Reading workbook…");
-    let res = await fetch("/api/newformat?step=read", { method: "POST", body: item.file,
+    let res = await fetch(`/api/newformat?step=read&name=${encodeURIComponent(item.file.name)}`, { method: "POST", body: item.file,
                                                          headers: { "Content-Type": "application/octet-stream" } });
     if (!res.ok) throw new Error(await errorOf(res));
     const { municipalities } = await res.json();

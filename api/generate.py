@@ -2,7 +2,7 @@
 System Upload, AR and/or STUB files.
 
 Request:  POST /api/generate?name=<file name>&formats=SYSTEM,AR,STUB&amount=2325
-          body = the raw .xlsx file
+          body = the raw .xlsx or .pdf file
 Response: 200 application/zip, or 400/500 JSON {"error": "..."}
 """
 import io

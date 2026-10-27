@@ -197,12 +197,12 @@ class App(tk.Tk):
         tabs = ttk.Notebook(self)
         tabs.pack(fill="both", expand=True, padx=6, pady=6)
         self.master_tab = Panel(
-            tabs, self, "Masterlist files", [("Excel files", "*.xlsx *.xlsm")],
+            tabs, self, "Masterlist files", [("Excel or PDF files", "*.xlsx *.xlsm *.pdf")],
             [(f["name"], f["label"], True) for f in engine.FORMATS],
             "Amount if missing:", run_masterlist, "masterlist")
         self.stub_tab = Panel(
             tabs, self, 'Source workbooks ("STUB <MUNICIPALITY>" sheets, or any list with column headings)',
-            [("Excel files", "*.xlsx *.xlsm")],
+            [("Excel or PDF files", "*.xlsx *.xlsm *.pdf")],
             [("AR", "AR format (PDF)", True), ("STUB", "STUB format with QR (PDF)", True),
              ("SYSTEM", "System upload (Excel)", True)],
             "AR amount:", run_newformat, "source workbook", province_field=True)

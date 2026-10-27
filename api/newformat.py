@@ -1,6 +1,6 @@
 """Vercel serverless function for the "New format" tab.
 
-Step 1  POST /api/newformat?step=read      body = the source workbook (.xlsx)
+Step 1  POST /api/newformat?step=read&name=<file name>   body = the source workbook (.xlsx or .pdf)
         -> JSON {"municipalities": [{"municipality", "region", "province", "records"}]}
         (only sheets named "STUB <MUNICIPALITY>")
 Step 2  POST /api/newformat?step=render    JSON {"kind": "AR"|"STUB"|"SYSTEM",
@@ -36,7 +36,8 @@ class handler(BaseHTTPRequestHandler):
         body = self.rfile.read(size)
         try:
             if step == "read":
-                munis = newformat.read_source(io.BytesIO(body))
+                name = parse_qs(urlparse(self.path).query).get("name", [""])[0]
+                munis = newformat.read_source(io.BytesIO(body), Path(name).name or None)
                 return self._json(200, {"municipalities": munis, "font": newformat.FONT_NAME})
             if step == "render":
                 req = json.loads(body)

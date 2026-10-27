@@ -7,6 +7,9 @@ Turns beneficiary masterlists (any column order, missing columns allowed) into t
 - `<name> - STUB FORMAT.xlsx` – 20 per page with QR codes of the RSBSA number, no signatories
 
 A workbook with several data sheets (e.g. UNCLAIMED, ADDITIONAL) gets one set per sheet.
+**PDF uploads** (both tabs): the tables of a text PDF — e.g. a printed AR/STUB or an exported
+masterlist — are read like a sheet: columns by heading, titles/signatories/totals skipped
+(`pdf_to_workbook` in `paffp_formatter.py`). Scanned PDFs (images only) cannot be read.
 If the masterlist has no AMOUNT, the default amount (2325, changeable in the app/web page) is used.
 
 ## New format (second tab)
