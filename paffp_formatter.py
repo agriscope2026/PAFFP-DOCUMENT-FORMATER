@@ -104,6 +104,8 @@ FIELD_ALIASES = {
     "municipality": ["municipality", "citymunicipality", "municipalitycity", "cityormunicipality",
                      "town", "city", "mun", "municipal", "lgu", "farmeraddressmun", "addressmun",
                      "addressmunicipality", "farmeraddressmunicipality", "addresscitymun"],
+    "province": ["province", "prv", "prov", "provincename", "farmeraddressprv", "addressprv",
+                 "farmeraddressprovince", "addressprovince"],
     "amount": ["amount", "amt", "amountreceived", "cashassistance"],
     "idtype": ["idtypeidnoofauthorizedclaimants", "idtype", "idno", "validid"],
 }

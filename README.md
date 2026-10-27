@@ -11,8 +11,12 @@ If the masterlist has no AMOUNT, the default amount (2325, changeable in the app
 
 ## New format (second tab)
 
-Upload the source workbook (like `sample to format.xlsx`). Only sheets named `STUB <MUNICIPALITY>`
-(e.g. `STUB HUNGDUAN`) are used; other sheets are ignored. Each municipality gets:
+Upload the source workbook (like `sample to format.xlsx`). Sheets named `STUB <MUNICIPALITY>`
+(e.g. `STUB HUNGDUAN`) are used when the workbook has any; other sheets are then ignored.
+Without them, every sheet with column headings is read instead (e.g. a system upload/export with
+`rsbsa_no, first_name, last_name, farmer_address_bgy, farmer_address_mun, ...`): columns are found
+by their heading text in any order (spellings: `FIELD_ALIASES` in `paffp_formatter.py`), and the
+beneficiaries are split by the MUNICIPALITY column. Each municipality gets:
 
 - `<MUNICIPALITY> - AR FORMAT.pdf` – layout of `AR FORMAT NEW.pdf`: 14 per page, signatories at the end
 - `<MUNICIPALITY> - STUB FORMAT.pdf` – layout of `STUB FORMAT NEW.xlsx`: 12 per page, QR code of the

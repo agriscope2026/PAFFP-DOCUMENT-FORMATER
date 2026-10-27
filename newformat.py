@@ -1,9 +1,10 @@
 """
 NEW FORMAT: source workbook -> AR (PDF), STUB with QR codes (PDF), SYSTEM UPLOAD (Excel)
 ======================================================================================
-Source: a workbook like "sample to format.xlsx". Only sheets named
-"STUB <MUNICIPALITY>" are used (e.g. "STUB HUNGDUAN"); all other sheets are ignored.
-Each such sheet gives three files:
+Source: a workbook like "sample to format.xlsx". Sheets named "STUB <MUNICIPALITY>"
+(e.g. "STUB HUNGDUAN") are used when there are any; otherwise any sheet with column
+headings (any order, e.g. a system upload/export) is read and split by MUNICIPALITY.
+Each municipality gives three files:
     <MUNICIPALITY> - AR FORMAT.pdf     layout of "AR FORMAT NEW.pdf" (14 per page, signatories)
     <MUNICIPALITY> - STUB FORMAT.pdf   layout of "STUB FORMAT NEW.xlsx" (12 per page),
                                        QR code of the RSBSA NO. in the last column (QR CODE)
@@ -62,6 +63,7 @@ AR_FOOTER = {
         (1, 155.1, 323.1, "Recommending Approval:", "", "left"),
         (1, 323.1, 538.7, "Approved for Payment:", "", "center"),
         (1, 538.7, 706.2, "Payment Received by Payee:", "", "left"),
+        (3, 17.3, 155.1, "KEVIN JOE P. ELADJOE", "b", "left"),
         (3, 155.1, 323.1, "DANILO P. DAGUIO, Ph.D.,CESO IV", "b", "left"),
         (3, 323.1, 538.7, "ATTY. JENNILYN M. DAWAYAN, CESO III", "b", "center"),
         (4, 17.3, 155.1, "RSBSA/Personnel who handles the list of beneficiaries", "i", "left"),
@@ -211,42 +213,88 @@ def _fmt_date(v):
     return v
 
 
+def _sheet_records(ws, hr, cols):
+    """Beneficiary rows under the heading row. Columns are found by their heading
+    text (engine.FIELD_ALIASES), so their order does not matter."""
+    heading_text = {f: engine.norm(ws.cell(hr, c).value) for f, c in cols.items()}
+    records = []
+    for row in ws.iter_rows(min_row=hr + 1, values_only=True):
+        rec = {}
+        for f, c in cols.items():
+            v = row[c - 1] if c - 1 < len(row) else None
+            v = re.sub(r"\s+", " ", v).strip() if isinstance(v, str) else v
+            rec[f] = None if v in ("", None) else _fmt_date(v) if f == "birthdate" else v
+        if not any(rec.get(f) for f in engine.NAME_FIELDS):
+            continue                                       # blank / filler row
+        if any(engine.norm(rec.get(f)) == heading_text[f] for f in engine.NAME_FIELDS if f in rec):
+            continue                                       # heading repeated inside the list
+        if any(engine.norm(rec.get(f)) in ("total", "grandtotal", "subtotal")
+               for f in engine.NAME_FIELDS + ("number",)):
+            continue                                       # total line
+        if rec.get("fullname") and not rec.get("surname") and not rec.get("first"):
+            s, fn, mi = engine.split_full_name(rec["fullname"])
+            rec["surname"], rec["first"] = s, fn
+            rec["middle"] = rec.get("middle") or mi
+        if str(rec.get("ext") or "").strip().upper() in ("N/A", "NA", "NONE", "-"):
+            rec["ext"] = None
+        records.append(rec)
+    return records
+
+
+def _title_lines(ws, hr):
+    """'Region: ...' and 'Province : ...' written above the heading row."""
+    region = province = None
+    for r in range(1, hr):
+        for c in ws[r]:
+            t = str(c.value or "").strip()
+            if re.match(r"region\b", t, re.I):
+                region = t
+            elif re.match(r"province\b", t, re.I):
+                province = t
+    return region, province
+
+
 def read_source(source):
-    """Municipality sheets of the source workbook.
+    """Municipalities of the source workbook.
+    Sheets named "STUB <MUNICIPALITY>" are used when there are any (other sheets
+    are then ignored). Otherwise every sheet with column headings is read, e.g. a
+    system upload/export like rsbsa_no, first_name, last_name, farmer_address_bgy ...
+    in any column order, and its beneficiaries are split by their MUNICIPALITY
+    column (the sheet name when there is none).
     Returns [{"municipality", "sheet", "region", "province", "records"}]."""
     wb = openpyxl.load_workbook(source, data_only=True)
-    out = []
+    sheets = []
     for ws in wb.worksheets:
-        m = SHEET_PATTERN.match(ws.title)
-        if not m or ws.sheet_state != "visible":
+        if ws.sheet_state != "visible":
             continue
         hr, cols = engine.find_heading_row(ws)
-        if not hr:
+        if hr:
+            sheets.append((ws, hr, cols, SHEET_PATTERN.match(ws.title)))
+    stub_sheets = [s for s in sheets if s[3]]
+    out = []
+    for ws, hr, cols, m in stub_sheets or sheets:
+        records = _sheet_records(ws, hr, cols)
+        if not records:
             continue
-        region = province = None
-        for r in range(1, hr):
-            for c in ws[r]:
-                t = str(c.value or "").strip()
-                if re.match(r"region\b", t, re.I):
-                    region = t
-                elif re.match(r"province\b", t, re.I):
-                    province = t
-        records = []
-        for row in ws.iter_rows(min_row=hr + 1, values_only=True):
-            rec = {}
-            for f, c in cols.items():
-                v = row[c - 1] if c - 1 < len(row) else None
-                v = re.sub(r"\s+", " ", v).strip() if isinstance(v, str) else v
-                rec[f] = None if v in ("", None) else _fmt_date(v) if f == "birthdate" else v
-            if not any(rec.get(f) for f in ("rsbsa", "surname", "first")):
-                continue
-            records.append(rec)
-        if records:
-            out.append({"municipality": m.group(1).strip().upper(), "sheet": ws.title,
-                        "region": region or "Region: CAR", "province": province or "Province :",
-                        "records": records})
+        region, province = _title_lines(ws, hr)
+        if m:
+            groups = {m.group(1).strip().upper(): records}
+        else:
+            groups = {}
+            for rec in records:
+                name = str(rec.get("municipality") or ws.title).strip().upper()
+                groups.setdefault(name, []).append(rec)
+        for name, recs in groups.items():
+            prov = province
+            if not prov:                                   # from a PROVINCE column
+                names = {str(r["province"]).strip().upper() for r in recs if r.get("province")}
+                prov = province_line(names.pop()) if len(names) == 1 else None
+            out.append({"municipality": name, "sheet": ws.title,
+                        "region": region or "Region: CAR", "province": prov or "Province :",
+                        "records": recs})
     if not out:
-        raise ValueError('no sheets named "STUB <MUNICIPALITY>" with beneficiaries were found')
+        raise ValueError("no beneficiaries found under column headings "
+                         "(e.g. RSBSA NO., SURNAME, FIRST NAME)")
     return out
 
 

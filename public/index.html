@@ -119,8 +119,10 @@
 
   <!-- ===================== TAB 2: new format ===================== -->
   <section class="panel" id="panel-stub" role="tabpanel" aria-labelledby="tab-stub" hidden>
-    <p class="intro">Upload the source workbook. Only sheets named <strong>STUB &lt;MUNICIPALITY&gt;</strong>
-      (e.g. STUB HUNGDUAN) are used; other sheets are ignored. Each municipality gets the AR and the STUB as PDF
+    <p class="intro">Upload the source workbook. Sheets named <strong>STUB &lt;MUNICIPALITY&gt;</strong>
+      (e.g. STUB HUNGDUAN) are used when there are any; otherwise any list (e.g. a system upload/export) is read,
+      with columns found by their headings in any order and split by MUNICIPALITY.
+      Each municipality gets the AR and the STUB as PDF
       (the STUB with a QR code of the RSBSA NO. in the NO column) and the System Upload as Excel.</p>
     <section class="card">
       <p class="step">1 &middot; Source workbooks</p>

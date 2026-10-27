@@ -201,7 +201,7 @@ class App(tk.Tk):
             [(f["name"], f["label"], True) for f in engine.FORMATS],
             "Amount if missing:", run_masterlist, "masterlist")
         self.stub_tab = Panel(
-            tabs, self, 'Source workbooks (only sheets named "STUB <MUNICIPALITY>" are used)',
+            tabs, self, 'Source workbooks ("STUB <MUNICIPALITY>" sheets, or any list with column headings)',
             [("Excel files", "*.xlsx *.xlsm")],
             [("AR", "AR format (PDF)", True), ("STUB", "STUB format with QR (PDF)", True),
              ("SYSTEM", "System upload (Excel)", True)],
